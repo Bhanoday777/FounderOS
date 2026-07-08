@@ -1,0 +1,26 @@
+# Python
+backend/.venv/
+backend/**/__pycache__/
+backend/**/*.py[cod]
+*.pyc
+
+# Pytest
+backend/.pytest_cache/
+
+# Node
+frontend/node_modules/
+frontend/.next/
+
+# Environment
+.env
+.env.*
+!.env.template
+
+# IDE
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+.vscode/
