@@ -450,6 +450,33 @@ class BoardOrchestrator:
         self, session_id: str, idea: str, active_roles: List[Role]
     ) -> AsyncGenerator[Dict, None]:
         """
+        Wrapper to handle any critical orchestrator stream errors gracefully.
+        """
+        try:
+            async for event in self._run_session_generator(session_id, idea, active_roles):
+                yield event
+        except Exception as e:
+            logger.error(f"Critical error in boardroom orchestrator loop: {e}", exc_info=True)
+            try:
+                session = await self.repository.get_session(session_id)
+                if session:
+                    session.state = SessionState.FAILED
+                    await self.repository.save_session(session)
+            except Exception as repo_err:
+                logger.error(f"Failed to save failed state to database: {repo_err}")
+            yield {
+                "event": "status",
+                "data": {
+                    "session_id": session_id,
+                    "state": SessionState.FAILED,
+                    "message": f"Critical system error: {str(e)}"
+                }
+            }
+
+    async def _run_session_generator(
+        self, session_id: str, idea: str, active_roles: List[Role]
+    ) -> AsyncGenerator[Dict, None]:
+        """
         Executes the full boardroom session state machine and streams events.
         """
         session = await self.repository.get_session(session_id)
