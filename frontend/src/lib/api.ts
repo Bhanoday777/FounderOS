@@ -11,6 +11,7 @@ export interface Session {
   synthesis: SynthesisResult | null;
   created_at: number;
   updated_at: number;
+  domain?: string;
 }
 
 export interface DebateTurn {
@@ -37,6 +38,8 @@ export interface Vote {
   category_details?: CategoryEvaluationDetail[];
   reasoning: string;
   blocking_concern?: string | null;
+  critical_assumption?: string;
+  biggest_concern?: string;
 }
 
 export interface StartupHealthScore {
@@ -47,6 +50,9 @@ export interface StartupHealthScore {
   score_explanations?: Record<string, string>;
   agent_votes: Record<string, string>;
   explainable_scores?: Record<string, CategoryEvaluationDetail>;
+  penalties?: any[];
+  consensus_level?: string;
+  vote_distribution?: Record<string, number>;
 }
 
 export interface SynthesisResult {
@@ -61,12 +67,41 @@ export interface SynthesisResult {
   ux_review: string;
   competitive_landscape: string;
   risks?: string[];
+  executive_summary_v2?: {
+    vision: string;
+    strategic_moat: string;
+    capital_efficiency: string;
+    overall_verdict: string;
+  };
+  risk_matrix?: {
+    level: string;
+    risk: string;
+    mitigation: string;
+  }[];
+  opportunity_matrix?: {
+    horizon: string;
+    opportunity: string;
+    value: string;
+  }[];
+  action_plan?: {
+    phase: string;
+    priority: string;
+    milestone: string;
+  }[];
 }
 
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+export function getApiBase() {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== "undefined" && window.location.hostname) {
+    return `http://${window.location.hostname}:8000`;
+  }
+  return "http://localhost:8000";
+}
+
+export const API_BASE = getApiBase();
 
 export async function createSession(idea: string, activeAgents?: string[]): Promise<Session> {
-  const res = await fetch(`${API_BASE}/api/board/session`, {
+  const res = await fetch(`${getApiBase()}/api/board/session`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -83,7 +118,7 @@ export async function createSession(idea: string, activeAgents?: string[]): Prom
 }
 
 export async function getSession(sessionId: string): Promise<Session> {
-  const res = await fetch(`${API_BASE}/api/board/session/${sessionId}`);
+  const res = await fetch(`${getApiBase()}/api/board/session/${sessionId}`);
   if (!res.ok) {
     throw new Error(`Failed to fetch boardroom session: ${res.statusText}`);
   }
@@ -91,7 +126,7 @@ export async function getSession(sessionId: string): Promise<Session> {
 }
 
 export async function listSessions(): Promise<Session[]> {
-  const res = await fetch(`${API_BASE}/api/board/sessions`);
+  const res = await fetch(`${getApiBase()}/api/board/sessions`);
   if (!res.ok) {
     throw new Error(`Failed to list boardroom sessions: ${res.statusText}`);
   }
@@ -108,6 +143,7 @@ export function useBoardroomStream(sessionId: string | undefined, onComplete?: (
   const [activeAgents, setActiveAgents] = useState<string[]>([]);
   const [advisorStates, setAdvisorStates] = useState<Record<string, { state: string; details: string }>>({});
   const [error, setError] = useState<string | null>(null);
+  const [isLoaded, setIsLoaded] = useState(false);
 
   // Load initial session state
   useEffect(() => {
@@ -117,12 +153,12 @@ export function useBoardroomStream(sessionId: string | undefined, onComplete?: (
         setActiveAgents(session.active_agents);
         const initialStates: Record<string, { state: string; details: string }> = {};
         session.active_agents.forEach((role) => {
-          initialStates[role] = { 
-            state: session.state === "COMPLETED" ? "COMPLETED" : "WAITING", 
-            details: session.state === "COMPLETED" ? "Session adjourned." : "Conjoined. Awaiting session start..." 
+          initialStates[role] = {
+            state: session.state === "COMPLETED" ? "COMPLETED" : "WAITING",
+            details: session.state === "COMPLETED" ? "Session adjourned." : "Conjoined. Awaiting session start..."
           };
         });
-        
+
         session.turns.forEach((t) => {
           initialStates[t.role] = { state: "REVIEWING", details: "Reviewing boardroom comments..." };
         });
@@ -142,14 +178,21 @@ export function useBoardroomStream(sessionId: string | undefined, onComplete?: (
       })
       .catch((err) => {
         console.error("Failed to load initial session info:", err);
+        setError(err.message || "Session not found. It may have been cleared during a backend server restart.");
+      })
+      .finally(() => {
+        setIsLoaded(true);
       });
   }, [sessionId]);
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || !isLoaded) return;
+
+    // Do not reconnect if session is already complete or failed
+    if (sessionState === "COMPLETED" || sessionState === "FAILED") return;
 
     // Open connection to FastAPI SSE endpoint
-    const url = `${API_BASE}/api/board/session/${sessionId}/stream`;
+    const url = `${getApiBase()}/api/board/session/${sessionId}/stream`;
     const eventSource = new EventSource(url);
 
     eventSource.addEventListener("status", (e: MessageEvent) => {
@@ -232,7 +275,7 @@ export function useBoardroomStream(sessionId: string | undefined, onComplete?: (
     return () => {
       eventSource.close();
     };
-  }, [sessionId]);
+  }, [sessionId, isLoaded]);
 
   return {
     turns,

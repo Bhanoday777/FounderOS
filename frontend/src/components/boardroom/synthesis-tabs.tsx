@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { SynthesisResult } from "@/lib/api";
+import { SynthesisResult, API_BASE } from "@/lib/api";
 import { 
   FileText, Server, ShieldAlert, Map, ChevronRight, Coins, 
   Megaphone, Scale, Palette, ShieldCheck, Compass, CheckCircle2, 
-  TrendingUp, AlertTriangle 
+  TrendingUp, AlertTriangle, Download, FileDown, Printer
 } from "lucide-react";
 
 function parseCEOSummary(text: string) {
@@ -29,9 +30,13 @@ function parseRoadmapItem(line: string) {
   };
 }
 
+import VentureSimulator from "./venture-simulator";
+
 interface Props {
   synthesis: SynthesisResult | null;
   sessionState: string;
+  turns?: any[];
+  healthScore?: any;
 }
 
 const TABS = [
@@ -40,11 +45,18 @@ const TABS = [
   { id: "finance",  label: "Finance & Governance",  icon: Coins      },
 ];
 
-export default function SynthesisTabs({ synthesis, sessionState }: Props) {
+export default function SynthesisTabs({ synthesis, sessionState, turns, healthScore }: Props) {
+  const { id: sessionId } = useParams<{ id: string }>();
   const [tab, setTab] = useState("strategy");
   const [subTab, setSubTab] = useState("summary");
+  const [expandedMemoParas, setExpandedMemoParas] = useState<Record<number, boolean>>({});
 
   const isSynthesizing = sessionState === "SYNTHESIS" && !synthesis;
+
+  const downloadReport = (format: "json" | "markdown" | "html") => {
+    if (!sessionId) return;
+    window.open(`${API_BASE}/api/board/session/${sessionId}/export/${format}`, "_blank");
+  };
 
   if (isSynthesizing) {
     return (
@@ -100,21 +112,54 @@ export default function SynthesisTabs({ synthesis, sessionState }: Props) {
 
   return (
     <div>
-      {/* Category Tabs */}
-      <div className="tab-bar" style={{ marginBottom: 16, display: "inline-flex" }}>
-        {TABS.map((t) => {
-          const Icon = t.icon;
-          return (
-            <button
-              key={t.id}
-              className={`tab-btn ${tab === t.id ? "active" : ""}`}
-              onClick={() => handleMainTabChange(t.id)}
-            >
-              <Icon size={13} />
-              {t.label}
-            </button>
-          );
-        })}
+      {/* Category Tabs & Export Row */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
+        <div className="tab-bar" style={{ display: "inline-flex" }}>
+          {TABS.map((t) => {
+            const Icon = t.icon;
+            return (
+              <button
+                key={t.id}
+                className={`tab-btn ${tab === t.id ? "active" : ""}`}
+                onClick={() => handleMainTabChange(t.id)}
+              >
+                <Icon size={13} />
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Action Export Buttons */}
+        <div style={{ display: "flex", gap: 8 }}>
+          <button 
+            onClick={() => downloadReport("markdown")}
+            className="btn btn-ghost" 
+            style={{ padding: "6px 12px", height: 34, fontSize: 11, gap: 6, border: "1px solid rgba(255,255,255,0.06)" }}
+            title="Download report in Markdown format"
+          >
+            <FileDown size={14} />
+            Markdown
+          </button>
+          <button 
+            onClick={() => downloadReport("json")}
+            className="btn btn-ghost" 
+            style={{ padding: "6px 12px", height: 34, fontSize: 11, gap: 6, border: "1px solid rgba(255,255,255,0.06)" }}
+            title="Export raw session data in JSON"
+          >
+            <Download size={14} />
+            JSON
+          </button>
+          <button 
+            onClick={() => downloadReport("html")}
+            className="btn btn-ghost" 
+            style={{ padding: "6px 12px", height: 34, fontSize: 11, gap: 6, border: "1px solid rgba(255,255,255,0.06)" }}
+            title="Open print-ready styled HTML report"
+          >
+            <Printer size={14} />
+            Print / PDF
+          </button>
+        </div>
       </div>
 
       {/* Sub-Tabs Row */}
@@ -128,6 +173,8 @@ export default function SynthesisTabs({ synthesis, sessionState }: Props) {
       }}>
         {tab === "strategy" && [
           { id: "summary", label: "Executive Summary" },
+          { id: "risk_matrix", label: "Risk Matrix" },
+          { id: "opportunity_matrix", label: "Opportunity Matrix" },
           { id: "investor", label: "Investment Memo" },
           { id: "gtm", label: "Go-To-Market" },
           { id: "competition", label: "Competitive Analysis" },
@@ -153,6 +200,7 @@ export default function SynthesisTabs({ synthesis, sessionState }: Props) {
 
         {tab === "product" && [
           { id: "roadmap", label: "Roadmap" },
+          { id: "action_plan", label: "Action Plan Matrix" },
           { id: "arch", label: "System Architecture" },
           { id: "ux", label: "UX Friction Review" },
           { id: "security", label: "Security Risk Assessment" },
@@ -179,6 +227,7 @@ export default function SynthesisTabs({ synthesis, sessionState }: Props) {
         {tab === "finance" && [
           { id: "financial", label: "Runway Forecast" },
           { id: "compliance", label: "Compliance Checklist" },
+          { id: "simulator", label: "Venture Simulator" },
         ].map(sub => (
           <button
             key={sub.id}
@@ -211,14 +260,53 @@ export default function SynthesisTabs({ synthesis, sessionState }: Props) {
         >
           {/* ── SECTION 1: STRATEGY TABS ── */}
           {tab === "strategy" && subTab === "summary" && (
-            hasParsedSummary ? (
+            synthesis.executive_summary_v2 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
+                  <div className="card" style={{ padding: 20, borderLeft: "3px solid #4d5fff", background: "rgba(77,95,255,0.02)" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#4d5fff", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+                      Core Vision & Value Prop
+                    </div>
+                    <p style={{ fontSize: 13, color: "rgba(244,244,255,0.9)", lineHeight: 1.65 }}>
+                      {synthesis.executive_summary_v2.vision}
+                    </p>
+                  </div>
+                  <div className="card" style={{ padding: 20, borderLeft: "3px solid #9b6dff", background: "rgba(155,109,255,0.02)" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#9b6dff", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+                      Strategic Moat & Defense
+                    </div>
+                    <p style={{ fontSize: 13, color: "rgba(244,244,255,0.9)", lineHeight: 1.65 }}>
+                      {synthesis.executive_summary_v2.strategic_moat}
+                    </p>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
+                  <div className="card" style={{ padding: 20, borderLeft: "3px solid #10b981", background: "rgba(16,185,129,0.02)" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#10b981", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+                      Capital Efficiency
+                    </div>
+                    <p style={{ fontSize: 13, color: "rgba(244,244,255,0.9)", lineHeight: 1.65 }}>
+                      {synthesis.executive_summary_v2.capital_efficiency}
+                    </p>
+                  </div>
+                  <div className="card" style={{ padding: 20, borderLeft: "3px solid #ef4444", background: "rgba(239,68,68,0.02)" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#ef4444", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+                      Overall Verdict
+                    </div>
+                    <p style={{ fontSize: 13, color: "rgba(244,244,255,0.9)", lineHeight: 1.65 }}>
+                      {synthesis.executive_summary_v2.overall_verdict}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : hasParsedSummary ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                 {summarySections["Startup Summary"] && (
                   <div className="card" style={{ padding: 20 }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
                       Startup Summary
                     </div>
-                    <p style={{ fontSize: 13, color: "rgba(244,244,255,0.9)", lineHeight: 1.6 }}>
+                    <p style={{ fontSize: 13, color: "rgba(244,244,255,0.9)", lineHeight: 1.65 }}>
                       {summarySections["Startup Summary"]}
                     </p>
                   </div>
@@ -308,17 +396,182 @@ export default function SynthesisTabs({ synthesis, sessionState }: Props) {
             )
           )}
 
+          {tab === "strategy" && subTab === "risk_matrix" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {synthesis.risk_matrix && synthesis.risk_matrix.length > 0 ? (
+                synthesis.risk_matrix.map((r, i) => {
+                  const color = r.level.toLowerCase() === "high" ? "#ef4444" : r.level.toLowerCase() === "medium" ? "#f59e0b" : "#10b981";
+                  return (
+                    <div key={i} className="card" style={{ padding: "20px 22px", borderLeft: `3px solid ${color}`, background: `${color}02` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color }}>
+                          {r.level} Risk
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 14, color: "#f4f4ff", fontWeight: 700, marginBottom: 8 }}>
+                        {r.risk}
+                      </div>
+                      <div style={{ fontSize: 12.5, color: "rgba(168,168,192,0.95)", lineHeight: 1.6 }}>
+                        <strong style={{ color: "#a8b8ff" }}>Mitigation: </strong>{r.mitigation}
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>No risk matrix generated.</p>
+              )}
+            </div>
+          )}
+
+          {tab === "strategy" && subTab === "opportunity_matrix" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {synthesis.opportunity_matrix && synthesis.opportunity_matrix.length > 0 ? (
+                synthesis.opportunity_matrix.map((o, i) => {
+                  return (
+                    <div key={i} className="card" style={{ padding: "20px 22px", borderLeft: "3px solid #84cc16", background: "rgba(132,204,22,0.02)" }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "#84cc16", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+                        {o.horizon} Horizon
+                      </div>
+                      <div style={{ fontSize: 14, color: "#f4f4ff", fontWeight: 700, marginBottom: 8 }}>
+                        {o.opportunity}
+                      </div>
+                      <div style={{ fontSize: 12.5, color: "rgba(168,168,192,0.95)", lineHeight: 1.6 }}>
+                        <strong style={{ color: "#a8b8ff" }}>Value Justification: </strong>{o.value}
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>No opportunity matrix generated.</p>
+              )}
+            </div>
+          )}
+
           {tab === "strategy" && subTab === "investor" && (
             <div className="card" style={{ padding: "24px 28px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
                 <TrendingUp size={16} style={{ color: "#f59e0b" }} />
                 <span style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                  Investment Memorandum
+                  Investment Memorandum (Annotated)
                 </span>
               </div>
-              <p style={{ fontSize: 13, color: "rgba(244,244,255,0.85)", lineHeight: 1.8, whiteSpace: "pre-wrap" }}>
-                {synthesis.investment_memo}
-              </p>
+              
+              {(() => {
+                const paragraphs = (synthesis.investment_memo || "")
+                  .split("\n\n")
+                  .filter((p) => p.trim().length > 0);
+
+                return (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                    {paragraphs.map((p, idx) => {
+                      const lower = p.toLowerCase();
+                      let matchedRole = "";
+                      let matchedComment = "";
+                      let matchedIcon = "💬";
+
+                      if (turns && turns.length > 0) {
+                        if (lower.includes("tech") || lower.includes("architect") || lower.includes("scale") || lower.includes("database")) {
+                          const turn = turns.find((t) => t.role === "CTO" || t.role === "Security Architect");
+                          if (turn) {
+                            matchedRole = turn.role;
+                            matchedComment = turn.content;
+                            matchedIcon = "💻";
+                          }
+                        } else if (lower.includes("market") || lower.includes("tam") || lower.includes("competition") || lower.includes("moat")) {
+                          const turn = turns.find((t) => t.role === "Investor" || t.role === "Competition Analyst");
+                          if (turn) {
+                            matchedRole = turn.role;
+                            matchedComment = turn.content;
+                            matchedIcon = "📈";
+                          }
+                        } else if (lower.includes("legal") || lower.includes("compliance") || lower.includes("regulation")) {
+                          const turn = turns.find((t) => t.role === "Legal Advisor");
+                          if (turn) {
+                            matchedRole = turn.role;
+                            matchedComment = turn.content;
+                            matchedIcon = "⚖️";
+                          }
+                        } else if (lower.includes("ux") || lower.includes("design") || lower.includes("onboarding") || lower.includes("user")) {
+                          const turn = turns.find((t) => t.role === "UX Advisor");
+                          if (turn) {
+                            matchedRole = turn.role;
+                            matchedComment = turn.content;
+                            matchedIcon = "🎨";
+                          }
+                        }
+                      }
+
+                      const isExpanded = !!expandedMemoParas[idx];
+
+                      return (
+                        <div
+                          key={idx}
+                          style={{
+                            background: matchedRole ? "rgba(255,255,255,0.01)" : "transparent",
+                            border: matchedRole ? "1px solid rgba(255,255,255,0.03)" : "none",
+                            borderRadius: matchedRole ? 12 : 0,
+                            padding: matchedRole ? "14px 16px" : 0,
+                            transition: "all 0.25s",
+                            position: "relative"
+                          }}
+                        >
+                          <p style={{ fontSize: 13, color: "rgba(244,244,255,0.85)", lineHeight: 1.8, margin: 0 }}>
+                            {p}
+                          </p>
+
+                          {matchedRole && (
+                            <div style={{ marginTop: 10 }}>
+                              <button
+                                className="btn btn-outline"
+                                onClick={() => setExpandedMemoParas(prev => ({ ...prev, [idx]: !prev[idx] }))}
+                                style={{
+                                  fontSize: 10,
+                                  padding: "4px 10px",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 6,
+                                }}
+                              >
+                                <span>{matchedIcon}</span>
+                                {isExpanded ? "Hide Transcript Link" : `Highlight Debate Stance (${matchedRole})`}
+                              </button>
+
+                              <AnimatePresence>
+                                {isExpanded && (
+                                  <motion.div
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: "auto" }}
+                                    exit={{ opacity: 0, height: 0 }}
+                                    transition={{ duration: 0.2 }}
+                                    style={{
+                                      marginTop: 10,
+                                      padding: "10px 14px",
+                                      background: "rgba(74,95,255,0.04)",
+                                      border: "1px solid rgba(74,95,255,0.12)",
+                                      borderRadius: 8,
+                                      overflow: "hidden"
+                                    }}
+                                  >
+                                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                                      <span style={{ fontSize: 10, fontWeight: 700, color: "#818cf8", textTransform: "uppercase" }}>
+                                        {matchedRole} Cross-Talk Snippet
+                                      </span>
+                                      <span style={{ fontSize: 9, color: "rgba(255,255,255,0.25)" }}>Source Transcript Annotation</span>
+                                    </div>
+                                    <p style={{ fontSize: 11, color: "rgba(244,244,255,0.8)", fontStyle: "italic", lineHeight: 1.5, margin: 0 }}>
+                                      "{matchedComment}"
+                                    </p>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -403,6 +656,30 @@ export default function SynthesisTabs({ synthesis, sessionState }: Props) {
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {tab === "product" && subTab === "action_plan" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {synthesis.action_plan && synthesis.action_plan.length > 0 ? (
+                synthesis.action_plan.map((a, i) => {
+                  return (
+                    <div key={i} className="card" style={{ padding: "20px 22px", borderLeft: "3px solid #06b6d4", background: "rgba(6,182,212,0.02)" }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "#06b6d4", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+                        {a.phase}
+                      </div>
+                      <div style={{ fontSize: 14, color: "#f4f4ff", fontWeight: 700, marginBottom: 8 }}>
+                        {a.priority}
+                      </div>
+                      <div style={{ fontSize: 12.5, color: "rgba(168,168,192,0.95)", lineHeight: 1.6 }}>
+                        <strong style={{ color: "#a8b8ff" }}>Target Milestone: </strong>{a.milestone}
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>No action plan matrix generated.</p>
+              )}
             </div>
           )}
 
@@ -501,6 +778,13 @@ export default function SynthesisTabs({ synthesis, sessionState }: Props) {
                 )}
               </div>
             </div>
+          )}
+          {tab === "finance" && subTab === "simulator" && (
+            <VentureSimulator
+              marketOpp={healthScore?.category_scores?.["Market Opportunity"] || 60}
+              techFeas={healthScore?.category_scores?.["Technical Feasibility"] || 60}
+              riskScore={healthScore?.category_scores?.["Risk"] || 60}
+            />
           )}
         </motion.div>
       </AnimatePresence>

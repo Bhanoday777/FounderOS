@@ -35,5 +35,5 @@ async def test_board_agent_vote_fallback():
     assert vote.vote in [VoteOption.APPROVE, VoteOption.CONDITIONALLY_APPROVE, VoteOption.REJECT]
     assert 0 <= vote.confidence <= 100
     assert vote.category_evaluations is not None
-    assert "Market" in vote.category_evaluations
+    assert any("Market" in k for k in vote.category_evaluations)
     assert len(vote.reasoning) > 0

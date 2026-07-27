@@ -1,7 +1,10 @@
 "use client";
 
+import { useState } from "react";
+import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { Vote } from "@/lib/api";
+import AdvisorChatDrawer from "./advisor-chat-drawer";
 import { 
   Briefcase, Cpu, TrendingUp, Layers, Megaphone, Scale, Coins, ShieldAlert, Palette, Compass, Bot, CheckCircle, AlertCircle, XCircle 
 } from "lucide-react";
@@ -50,6 +53,9 @@ function ConfidenceBar({ value, color }: { value: number; color: string }) {
 interface Props { votes: Vote[]; }
 
 export default function VotePanel({ votes }: Props) {
+  const { id } = useParams<{ id: string }>();
+  const [activeChatRole, setActiveChatRole] = useState<string | null>(null);
+
   if (!votes.length) {
     return (
       <div style={{
@@ -148,6 +154,43 @@ export default function VotePanel({ votes }: Props) {
                 }}>
                   "{vote.reasoning}"
                 </p>
+                
+                {vote.critical_assumption && (
+                  <div style={{
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    background: "rgba(59,130,246,0.06)",
+                    border: "1px solid rgba(59,130,246,0.18)",
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 8
+                  }}>
+                    <CheckCircle size={13} style={{ color: "#3b82f6", marginTop: 2, flexShrink: 0 }} />
+                    <div style={{ fontSize: 11, color: "#93c5fd", lineHeight: 1.4 }}>
+                      <strong style={{ display: "block", marginBottom: 2 }}>Critical Assumption</strong>
+                      {vote.critical_assumption}
+                    </div>
+                  </div>
+                )}
+
+                {vote.biggest_concern && (
+                  <div style={{
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    background: "rgba(245,158,11,0.06)",
+                    border: "1px solid rgba(245,158,11,0.18)",
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 8
+                  }}>
+                    <AlertCircle size={13} style={{ color: "#f59e0b", marginTop: 2, flexShrink: 0 }} />
+                    <div style={{ fontSize: 11, color: "#fde047", lineHeight: 1.4 }}>
+                      <strong style={{ display: "block", marginBottom: 2 }}>Biggest Concern</strong>
+                      {vote.biggest_concern}
+                    </div>
+                  </div>
+                )}
+
                 {vote.blocking_concern && (
                   <div style={{
                     padding: "10px 12px",
@@ -156,21 +199,50 @@ export default function VotePanel({ votes }: Props) {
                     border: "1px solid rgba(239,68,68,0.18)",
                     display: "flex",
                     alignItems: "flex-start",
-                    gap: 8,
-                    marginTop: 4
+                    gap: 8
                   }}>
-                    <XCircle size={13} style={{ color: "#ef4444", marginTop: 1, flexShrink: 0 }} />
+                    <XCircle size={13} style={{ color: "#ef4444", marginTop: 2, flexShrink: 0 }} />
                     <div style={{ fontSize: 11, color: "#f87171", lineHeight: 1.4 }}>
                       <strong style={{ display: "block", marginBottom: 2 }}>Blocking Concern</strong>
                       {vote.blocking_concern}
                     </div>
                   </div>
                 )}
+
+                <button
+                  className="btn btn-outline"
+                  onClick={() => setActiveChatRole(vote.role)}
+                  style={{
+                    width: "100%",
+                    fontSize: 11,
+                    padding: "8px 12px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 6,
+                    marginTop: 8,
+                    borderColor: `${role.accent}30`,
+                    color: role.accent,
+                  }}
+                >
+                  <Bot size={13} />
+                  Cross-Examine Advisor
+                </button>
               </div>
             </motion.div>
           );
         })}
       </div>
+
+      {activeChatRole && (
+        <AdvisorChatDrawer
+          role={activeChatRole}
+          sessionId={id as string}
+          initialReasoning={votes.find(v => v.role === activeChatRole)?.reasoning}
+          onClose={() => setActiveChatRole(null)}
+          accentColor={ROLE_CONFIG[activeChatRole]?.accent || "#4d5fff"}
+        />
+      )}
     </div>
   );
 }

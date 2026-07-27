@@ -2,17 +2,21 @@
 
 import { useParams } from "next/navigation";
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { useBoardroomStream } from "@/lib/api";
 import DebateFeed from "@/components/boardroom/debate-feed";
 import VotePanel from "@/components/boardroom/vote-panel";
 import ScoreGauge from "@/components/boardroom/score-gauge";
 import SynthesisTabs from "@/components/boardroom/synthesis-tabs";
+import SandboxTab from "@/components/boardroom/sandbox-tab";
+import PitchDrill from "@/components/boardroom/pitch-drill";
 
 const STATE_LABELS: Record<string, { label: string; color: string; bg: string }> = {
   INITIALIZED:       { label: "Initializing",      color: "#a8b8ff", bg: "rgba(74,95,255,0.08)"  },
   ROUND_1_ANALYSIS:  { label: "Round 1 — Analysis", color: "#9b6dff", bg: "rgba(155,109,255,0.08)" },
   ROUND_2_DEBATE:    { label: "Round 2 — Debate",   color: "#4d5fff", bg: "rgba(74,95,255,0.08)"  },
+  ROUND_3_REVISION:  { label: "Round 3 — Consensus", color: "#3b82f6", bg: "rgba(59,130,246,0.08)"  },
   VOTING:            { label: "Executive Voting",   color: "#f59e0b", bg: "rgba(245,158,11,0.08)" },
   SYNTHESIS:         { label: "Synthesizing",       color: "#10b981", bg: "rgba(16,185,129,0.08)" },
   COMPLETED:         { label: "Session Complete",   color: "#10b981", bg: "rgba(16,185,129,0.06)" },
@@ -24,6 +28,8 @@ const TABS = [
   { id: "votes",     label: "Votes" },
   { id: "score",     label: "Score" },
   { id: "synthesis", label: "Report" },
+  { id: "sandbox",   label: "Sandbox" },
+  { id: "drill",     label: "Pitch Drill" },
 ];
 
 export default function BoardroomPage() {
@@ -64,8 +70,13 @@ export default function BoardroomPage() {
           borderRadius: 20,
         }}>
           <div style={{ fontSize: 36, marginBottom: 16 }}>⚠</div>
-          <h3 style={{ fontSize: 18, fontWeight: 700, color: "#f4f4ff", marginBottom: 10 }}>Connection Error</h3>
-          <p style={{ fontSize: 13, color: "rgba(248,113,113,0.9)", lineHeight: 1.6 }}>{error}</p>
+          <h3 style={{ fontSize: 18, fontWeight: 700, color: "#f4f4ff", marginBottom: 10 }}>Session Error</h3>
+          <p style={{ fontSize: 13, color: "rgba(248,113,113,0.9)", lineHeight: 1.6, marginBottom: 24 }}>{error}</p>
+          <Link href="/">
+            <button className="btn btn-primary" style={{ width: "100%" }}>
+              Back to Executive Center
+            </button>
+          </Link>
         </div>
       </div>
     );
@@ -116,7 +127,9 @@ export default function BoardroomPage() {
             const locked =
               (t.id === "votes" && votes.length === 0) ||
               (t.id === "score" && !healthScore) ||
-              (t.id === "synthesis" && !synthesis);
+              (t.id === "synthesis" && !synthesis) ||
+              (t.id === "sandbox" && !healthScore) ||
+              (t.id === "drill" && !healthScore);
             return (
               <button
                 key={t.id}
@@ -161,7 +174,9 @@ export default function BoardroomPage() {
           {activeTab === "debate"    && <DebateFeed turns={turns} sessionState={sessionState} activeAgents={activeAgents} advisorStates={advisorStates} />}
           {activeTab === "votes"     && <VotePanel votes={votes} />}
           {activeTab === "score"     && <ScoreGauge score={healthScore} />}
-          {activeTab === "synthesis" && <SynthesisTabs synthesis={synthesis} sessionState={sessionState} />}
+          {activeTab === "synthesis" && <SynthesisTabs synthesis={synthesis} sessionState={sessionState} turns={turns} healthScore={healthScore} />}
+          {activeTab === "sandbox"   && healthScore && <SandboxTab sessionId={id} initialHealthScore={healthScore} />}
+          {activeTab === "drill"     && healthScore && <PitchDrill sessionId={id} activeAgents={activeAgents} />}
         </motion.div>
       </AnimatePresence>
     </div>

@@ -12,6 +12,8 @@ class Settings(BaseSettings):
 
     # API key for Google Gemini (supports loading from GEMINI_API_KEY environment variable)
     gemini_api_key: str = Field(default="", validation_alias="gemini_api_key")
+    gemini_model: str = Field(default="gemini-2.0-flash-lite", validation_alias="gemini_model")
+    offline_demo: bool = Field(default=True, validation_alias="offline_demo")
     project_name: str = "FounderOS"
     environment: str = "development"
     

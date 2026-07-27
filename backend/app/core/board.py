@@ -3,6 +3,8 @@ import asyncio
 from typing import AsyncGenerator, List, Dict
 import time
 import uuid
+import anyio
+from pydantic import BaseModel, Field
 
 from ..schemas.session import (
     BoardroomSession, Role, DebateTurn, Vote, VoteOption,
@@ -10,6 +12,7 @@ from ..schemas.session import (
 )
 from .agent import BoardAgent
 from ..database.repository import SessionRepository
+from ..config import settings
 from google import genai
 from google.genai import types
 
@@ -41,11 +44,11 @@ class BoardOrchestrator:
             "Return only the selected category name as plain text with no quotes, formatting, or extra text."
         )
 
-        if self.client:
+        if self.client and not settings.offline_demo:
             try:
                 response = await anyio.to_thread.run_sync(
                     lambda: self.client.models.generate_content(
-                        model="gemini-2.5-flash",
+                        model=settings.gemini_model,
                         contents=f"Classify this startup concept:\n{idea}",
                         config=types.GenerateContentConfig(
                             system_instruction=system_instruction,
@@ -135,7 +138,9 @@ class BoardOrchestrator:
                 score_explanations={},
                 agent_votes={},
                 explainable_scores={},
-                penalties=[]
+                penalties=[],
+                consensus_level="Split Board",
+                vote_distribution={}
             )
 
         # Retrieve configurable advisor weights from settings if not passed
@@ -161,7 +166,15 @@ class BoardOrchestrator:
                 approved_count += 1
 
         # Calculate category scores using advisor evaluations and configured weights
-        categories = ["Innovation", "Execution", "Market", "Financial", "Technology", "Competition"]
+        categories = ["Market Opportunity", "Technical Feasibility", "Financial Viability", "Execution Readiness", "Competitive Advantage", "Risk"]
+        cat_weights = {
+            "Market Opportunity": 0.20,
+            "Technical Feasibility": 0.20,
+            "Financial Viability": 0.20,
+            "Execution Readiness": 0.15,
+            "Competitive Advantage": 0.15,
+            "Risk": 0.10
+        }
         category_scores = {}
         category_explanations_detailed = {}
         
@@ -234,13 +247,14 @@ class BoardOrchestrator:
                 consensus_reasons.append("Low board confidence deduction (-2.0)")
 
         # Calculate base weighted category score
-        weighted_cat_avg = sum(category_scores.values()) / len(category_scores) if category_scores else 60.0
+        weighted_cat_sum = sum(category_scores[cat] * cat_weights[cat] for cat in categories)
+        weighted_cat_avg = weighted_cat_sum
         
         # Final calculated score
         raw_score = weighted_cat_avg - total_penalties + consensus_adj
         
-        # Scores above 93 should almost never occur -> cap overall score at 92!
-        overall_score = round(max(0.0, min(92.0, raw_score)))
+        # Scores capped at 100
+        overall_score = round(max(0.0, min(100.0, raw_score)))
 
         approval_ratio = round(approved_count / len(votes), 2) if votes else 0.0
         average_confidence = round(total_confidence / len(votes), 1) if votes else 0.0
@@ -259,12 +273,12 @@ class BoardOrchestrator:
             
             # Map primary advisors for descriptions
             primary_advisors = {
-                "Innovation": [Role.CEO, Role.PRODUCT_MANAGER],
-                "Execution": [Role.PRODUCT_MANAGER, Role.CEO],
-                "Market": [Role.INVESTOR, Role.MARKETING, Role.CEO],
-                "Financial": [Role.FINANCE, Role.INVESTOR, Role.CEO],
-                "Technology": [Role.CTO, Role.SECURITY, Role.CEO],
-                "Competition": [Role.COMPETITION, Role.INVESTOR, Role.CEO]
+                "Market Opportunity": [Role.CEO, Role.INVESTOR, Role.MARKETING],
+                "Technical Feasibility": [Role.CTO, Role.SECURITY],
+                "Financial Viability": [Role.FINANCE, Role.INVESTOR],
+                "Execution Readiness": [Role.PRODUCT_MANAGER, Role.UX, Role.LEGAL],
+                "Competitive Advantage": [Role.COMPETITION, Role.CEO, Role.INVESTOR],
+                "Risk": [Role.SECURITY, Role.LEGAL, Role.FINANCE]
             }
             
             expert_roles = primary_advisors[cat]
@@ -316,8 +330,6 @@ class BoardOrchestrator:
             f"{consensus_adj:+.1f} Consensus Adjustment. "
             f"{penalties_str} {consensus_str}"
         )
-        if raw_score > 92.0:
-            overall_reason += " Score capped at maximum calibration limit of 92."
 
         all_risks = [score_detail.risk_level for score_detail in explainable_scores.values()]
         overall_risk = "LOW"
@@ -334,6 +346,23 @@ class BoardOrchestrator:
             reason=overall_reason
         )
 
+        vote_counts = {"APPROVED": 0, "CONDITIONAL": 0, "REJECTED": 0}
+        for v in votes:
+            if v.vote == VoteOption.APPROVE:
+                vote_counts["APPROVED"] += 1
+            elif v.vote == VoteOption.CONDITIONALLY_APPROVE:
+                vote_counts["CONDITIONAL"] += 1
+            else:
+                vote_counts["REJECTED"] += 1
+
+        non_zero_votes = sum(1 for c in vote_counts.values() if c > 0)
+        if non_zero_votes == 1:
+            consensus_level = "High Consensus"
+        elif vote_counts["APPROVED"] > 0 and vote_counts["REJECTED"] > 0:
+            consensus_level = "Split Board"
+        else:
+            consensus_level = "Moderate Consensus"
+
         return StartupHealthScore(
             overall_score=overall_score,
             approval_ratio=approval_ratio,
@@ -342,8 +371,80 @@ class BoardOrchestrator:
             score_explanations=score_explanations,
             agent_votes=agent_votes,
             explainable_scores=explainable_scores,
-            penalties=applied_penalties
+            penalties=applied_penalties,
+            consensus_level=consensus_level,
+            vote_distribution=vote_counts
         )
+
+    async def _synthesize_matrices(self, idea: str, reports_summary: str) -> Dict:
+        """
+        Generates the V2 matrices (risk, opportunity, action plan, and executive_summary_v2) using Gemini API.
+        """
+        class SynthesizedMatrices(BaseModel):
+            risk_matrix: List[Dict[str, str]] = Field(..., description="List of 3 items (High, Medium, Low) containing keys: 'level', 'risk', 'mitigation'")
+            opportunity_matrix: List[Dict[str, str]] = Field(..., description="List of 3 items (Immediate, Medium-term, Long-term) containing keys: 'horizon', 'opportunity', 'value'")
+            action_plan: List[Dict[str, str]] = Field(..., description="List of 4 items containing keys: 'phase', 'priority', 'milestone'")
+            executive_summary_v2: Dict[str, str] = Field(..., description="Keys: 'vision', 'strategic_moat', 'capital_efficiency', 'overall_verdict'")
+
+        system_instruction = (
+            "You are a Senior Venture Analyst. Analyze the board's department reports and synthesize "
+            "clear structured matrices for: Risk Matrix (High/Medium/Low with actionable mitigations), "
+            "Opportunity Matrix (Immediate, Medium-term, Long-term horizons with value justification), "
+            "and a Milestone Action Plan (Next 30 Days, 90 Days, 6 Months, Year).\n"
+            "Also synthesize a high-impact executive summary covering vision, strategic moat, capital efficiency, and overall verdict."
+        )
+
+        prompt = (
+            f"Startup Concept: {idea}\n\n"
+            f"Board Advisor Summarized Reports:\n{reports_summary}\n\n"
+            "Synthesize and return the required matrices strictly structured in JSON."
+        )
+
+        if self.client and not settings.offline_demo:
+            try:
+                response = await anyio.to_thread.run_sync(
+                    lambda: self.client.models.generate_content(
+                        model=settings.gemini_model,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_instruction,
+                            response_mime_type="application/json",
+                            response_schema=SynthesizedMatrices,
+                            temperature=0.2,
+                        )
+                    )
+                )
+                if response.text:
+                    import json
+                    return json.loads(response.text)
+            except Exception as e:
+                logger.error(f"Error calling Gemini in _synthesize_matrices: {e}")
+
+        # Fallback data if API fails or is offline
+        return {
+            "risk_matrix": [
+                {"level": "High", "risk": "Market adoption and distribution lag", "mitigation": "Launch pre-seed PLG loops early"},
+                {"level": "Medium", "risk": "Scalability under concurrency spikes", "mitigation": "Optimize caching and database queries"},
+                {"level": "Low", "risk": "Regulatory compliance requirements", "mitigation": "Standard Terms of Service and cookie audit"}
+            ],
+            "opportunity_matrix": [
+                {"horizon": "Immediate", "opportunity": "Bottom-up developer community outreach", "value": "Low-cost high-signal organic acquisition"},
+                {"horizon": "Medium-term", "opportunity": "Integrations marketplace", "value": "Increased retention and switching costs"},
+                {"horizon": "Long-term", "opportunity": "Enterprise telemetry compliance licensing", "value": "High-margin expansion revenue"}
+            ],
+            "action_plan": [
+                {"phase": "Next 30 Days", "priority": "Validate developer beachhead segment", "milestone": "10 customer interviews"},
+                {"phase": "Next 90 Days", "priority": "Launch single-workflow MVP", "milestone": "100 active users"},
+                {"phase": "Next 6 Months", "priority": "Build core telemetry pipeline", "milestone": "Implement GDPR DPAs"},
+                {"phase": "Next Year", "priority": "Open Series A funding discussions", "milestone": "$50k MRR baseline"}
+            ],
+            "executive_summary_v2": {
+                "vision": "To establish a practitioner-centric category leader in modern telemetry optimization.",
+                "strategic_moat": "Compound user data moat and referral loops from community-led distribution.",
+                "capital_efficiency": "High leverage from open-source seeding and bottom-up developer growth.",
+                "overall_verdict": "Conditional Proceed. Defensibility must be demonstrated in the first 90 days."
+            }
+        }
 
     async def run_session(
         self, session_id: str, idea: str, active_roles: List[Role]
@@ -372,6 +473,8 @@ class BoardOrchestrator:
         # Domain Detection
         domain = await self._detect_domain(idea)
         weights = self._get_advisor_weights(domain)
+        session.domain = domain
+        await self.repository.save_session(session)
         yield {"event": "status", "data": {"session_id": session_id, "state": session.state, "message": f"Domain identified: {domain}."}}
 
         # Instantiate agents
@@ -475,11 +578,50 @@ class BoardOrchestrator:
             await asyncio.sleep(0.1)
 
         # ----------------------------------------------------
-        # ROUND 3: Voting
+        # ROUND 3: Consensus & Revision
+        # ----------------------------------------------------
+        session.state = SessionState.ROUND_3_REVISION
+        await self.repository.save_session(session)
+        yield {"event": "status", "data": {"session_id": session_id, "state": session.state, "message": "Round 3: Reconciling views and driving consensus..."}}
+
+        for role in active_roles:
+            for other_role in active_roles:
+                if other_role != role:
+                    has_spoken = any(t.role == other_role and t.round == 3 for t in session.turns)
+                    st = "REVIEWING" if has_spoken else "WAITING"
+                    det = "Reviewing revised alignments..." if has_spoken else "Waiting to present final alignment..."
+                    yield {"event": "advisor_status", "data": {"role": other_role, "state": st, "details": det}}
+
+            yield {"event": "advisor_status", "data": {"role": role, "state": "THINKING", "details": "Reconciling peer feedback and formulating consensus statement..."}}
+            await asyncio.sleep(0.5)
+
+            agent = agents[role]
+            opinion = await agent.generate_opinion(idea, history, round=3)
+
+            yield {"event": "advisor_status", "data": {"role": role, "state": "SPEAKING", "details": "Presenting revised stance..."}}
+            await asyncio.sleep(0.2)
+
+            turn = DebateTurn(
+                id=str(uuid.uuid4()),
+                role=role,
+                round=3,
+                content=opinion
+            )
+            session.turns.append(turn)
+            history.append(f"{role.value} (Round 3 Revision): {opinion}")
+
+            await self.repository.save_session(session)
+            yield {"event": "turn", "data": turn.model_dump()}
+
+            yield {"event": "advisor_status", "data": {"role": role, "state": "REVIEWING", "details": "Listening to other revised stances..."}}
+            await asyncio.sleep(0.1)
+
+        # ----------------------------------------------------
+        # ROUND 4: Voting
         # ----------------------------------------------------
         session.state = SessionState.VOTING
         await self.repository.save_session(session)
-        yield {"event": "status", "data": {"session_id": session_id, "state": session.state, "message": "Round 3: Ballot voting concluded..."}}
+        yield {"event": "status", "data": {"session_id": session_id, "state": session.state, "message": "Round 4: Ballot voting concluded..."}}
 
         for role in active_roles:
             # Set other active roles to WAITING or REVIEWING
@@ -510,11 +652,11 @@ class BoardOrchestrator:
         yield {"event": "health_score", "data": health_score.model_dump()}
 
         # ----------------------------------------------------
-        # ROUND 4: Parallel Deliverable Synthesis
+        # ROUND 5: Parallel Deliverable Synthesis
         # ----------------------------------------------------
         session.state = SessionState.SYNTHESIS
         await self.repository.save_session(session)
-        yield {"event": "status", "data": {"session_id": session_id, "state": session.state, "message": "Round 4: Generating specialized reports..."}}
+        yield {"event": "status", "data": {"session_id": session_id, "state": session.state, "message": "Round 5: Generating specialized reports..."}}
 
         for role in active_roles:
             yield {"event": "advisor_status", "data": {"role": role, "state": "THINKING", "details": f"Compiling final {role.value} report..."}}
@@ -657,6 +799,13 @@ class BoardOrchestrator:
         # Legal checklist requires list parsing
         compliance_lines = [line.strip().lstrip("-*123456789. ") for line in reports[6].split("\n") if line.strip()]
 
+        # Synthesize matrices and executive summary V2
+        reports_summary = "\n\n".join([
+            f"=== {role.value} report ===\n{report}" 
+            for role, report in zip(active_roles, reports)
+        ])
+        matrices = await self._synthesize_matrices(idea, reports_summary)
+
         synthesis = SynthesisResult(
             executive_summary=reports[0],
             architecture=reports[1],
@@ -667,7 +816,11 @@ class BoardOrchestrator:
             compliance_checklist=compliance_lines,
             security_assessment=reports[7],
             ux_review=reports[8],
-            competitive_landscape=reports[9]
+            competitive_landscape=reports[9],
+            risk_matrix=matrices.get("risk_matrix", []),
+            opportunity_matrix=matrices.get("opportunity_matrix", []),
+            action_plan=matrices.get("action_plan", []),
+            executive_summary_v2=matrices.get("executive_summary_v2")
         )
 
         session.synthesis = synthesis

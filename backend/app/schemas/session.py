@@ -37,12 +37,14 @@ class Vote(BaseModel):
     confidence: int = Field(..., ge=0, le=100, description="Confidence score from 0 to 100")
     category_evaluations: Dict[str, int] = Field(
         default_factory=dict,
-        description="Scores between 0 and 100 for keys: Innovation, Execution, Market, Financial, Technology, Competition"
+        description="Scores between 0 and 100 for keys: Market Opportunity, Technical Feasibility, Financial Viability, Execution Readiness, Competitive Advantage, Risk"
     )
     category_details: List[CategoryEvaluationDetail] = Field(default_factory=list)
     reasoning: str
     blocking_concern: Optional[str] = Field(default=None, description="Critical blocking concern if voting REJECT or CONDITIONALLY_APPROVE")
     penalties: List[AgentPenaltySuggestion] = Field(default_factory=list)
+    critical_assumption: str = Field(default="", description="The single most critical assumption this advisor is making")
+    biggest_concern: str = Field(default="", description="The biggest concern or risk this advisor sees")
 
 class DebateTurn(BaseModel):
     id: str
@@ -55,6 +57,7 @@ class SessionState(str, Enum):
     INITIALIZED = "INITIALIZED"
     ROUND_1_ANALYSIS = "ROUND_1_ANALYSIS"
     ROUND_2_DEBATE = "ROUND_2_DEBATE"
+    ROUND_3_REVISION = "ROUND_3_REVISION"
     VOTING = "VOTING"
     SYNTHESIS = "SYNTHESIS"
     COMPLETED = "COMPLETED"
@@ -66,15 +69,17 @@ class StartupHealthScore(BaseModel):
     average_confidence: float = Field(..., ge=0.0, le=100.0)
     category_scores: Dict[str, int] = Field(
         default_factory=dict,
-        description="Aggregated deterministic scores for Innovation, Execution, Market, Financial, Technology, Competition"
+        description="Aggregated deterministic scores for Market Opportunity, Technical Feasibility, Financial Viability, Execution Readiness, Competitive Advantage, Risk"
     )
     score_explanations: Dict[str, str] = Field(default_factory=dict)
     agent_votes: Dict[Role, VoteOption]
     explainable_scores: Dict[str, CategoryEvaluationDetail] = Field(
         default_factory=dict,
-        description="Detailed explainable score breakdown for Innovation, Technology, Market, Financial, Competition, Execution, and Overall Health"
+        description="Detailed explainable score breakdown for the target categories and Overall Health"
     )
     penalties: List[Dict[str, str | int]] = Field(default_factory=list, description="Aggregated applied penalties for transparency")
+    consensus_level: str = Field(default="Split Board", description="Board agreement state: High Consensus, Moderate Consensus, Split Board")
+    vote_distribution: Dict[str, int] = Field(default_factory=dict, description="Distribution count: APPROVED, CONDITIONAL, REJECTED")
 
 class SynthesisResult(BaseModel):
     executive_summary: str = "" # CEO
@@ -87,6 +92,10 @@ class SynthesisResult(BaseModel):
     security_assessment: str = "" # Security
     ux_review: str = "" # UX
     competitive_landscape: str = "" # Competition
+    risk_matrix: List[Dict[str, str]] = Field(default_factory=list, description="High, Medium, Low risks with mitigation")
+    opportunity_matrix: List[Dict[str, str]] = Field(default_factory=list, description="Opportunities (Immediate, Medium, Long-term)")
+    action_plan: List[Dict[str, str]] = Field(default_factory=list, description="Milestones (Next 30/90 Days, 6 Months, Year)")
+    executive_summary_v2: Optional[Dict[str, str]] = Field(default=None, description="Structured V2 summary fields")
 
 class BoardroomSession(BaseModel):
     id: str
@@ -99,3 +108,4 @@ class BoardroomSession(BaseModel):
     synthesis: Optional[SynthesisResult] = None
     created_at: float = Field(default_factory=time.time)
     updated_at: float = Field(default_factory=time.time)
+    domain: str = Field(default="", description="The classified industry or domain of the startup")

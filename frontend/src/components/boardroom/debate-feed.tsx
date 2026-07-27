@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { DebateTurn } from "@/lib/api";
+import HolographicBoardroom from "./holographic-boardroom";
+import AdvisorChatDrawer from "./advisor-chat-drawer";
 import { 
-  Briefcase, Cpu, TrendingUp, Layers, Megaphone, Scale, Coins, ShieldAlert, Palette, Compass, Bot 
+  Briefcase, Cpu, TrendingUp, Layers, Megaphone, Scale, Coins, ShieldAlert, Palette, Compass, Bot, Volume2, VolumeX 
 } from "lucide-react";
 
 const ROLE_CONFIG: Record<string, {
@@ -40,26 +43,76 @@ function RoleAvatar({ role, size = 36 }: { role: string; size?: number }) {
   );
 }
 
+function speakText(text: string, role: string) {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = 1.0;
+  const pitchMap: Record<string, number> = {
+    CEO: 1.0, CTO: 1.1, Investor: 0.9, "Product Manager": 1.05,
+    "Marketing Strategist": 1.2, "Legal Advisor": 0.85, "Finance Advisor": 0.95,
+    "Security Architect": 0.8, "UX Advisor": 1.15, "Competition Analyst": 1.0
+  };
+  utterance.pitch = pitchMap[role] || 1.0;
+  window.speechSynthesis.speak(utterance);
+}
+
 function MessageCard({ turn, index }: { turn: DebateTurn; index: number }) {
   const cfg = ROLE_CONFIG[turn.role] || { accent: "#a8a8c0", border: "rgba(168,168,192,0.15)", glow: "transparent", label: turn.role };
-  const isEven = index % 2 === 0;
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  const handleSpeak = () => {
+    if (isPlaying) {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+      setIsPlaying(false);
+    } else {
+      speakText(turn.content, turn.role);
+      setIsPlaying(true);
+      setTimeout(() => setIsPlaying(false), Math.min(15000, turn.content.length * 60));
+    }
+  };
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 14 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04, duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-      style={{ display: "flex", gap: 14, alignItems: "flex-start", flexDirection: isEven ? "row" : "row" }}
+      style={{ display: "flex", gap: 14, alignItems: "flex-start" }}
     >
       <RoleAvatar role={turn.role} />
 
       <div style={{ flex: 1, minWidth: 0 }}>
         {/* Bubble header */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: cfg.accent }}>{turn.role}</span>
-          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", fontFamily: "monospace" }}>
-            · Round {turn.round}
-          </span>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: cfg.accent }}>{turn.role}</span>
+            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", fontFamily: "monospace" }}>
+              · Round {turn.round}
+            </span>
+          </div>
+
+          <button
+            onClick={handleSpeak}
+            title={isPlaying ? "Stop Voice" : "Listen to Advisor Voice"}
+            style={{
+              background: isPlaying ? `${cfg.accent}25` : "rgba(255,255,255,0.04)",
+              border: `1px solid ${isPlaying ? cfg.accent : "rgba(255,255,255,0.08)"}`,
+              borderRadius: 6,
+              padding: "3px 7px",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              fontSize: 10,
+              color: isPlaying ? cfg.accent : "rgba(255,255,255,0.5)",
+              transition: "all 0.15s ease",
+            }}
+          >
+            {isPlaying ? <VolumeX size={12} /> : <Volume2 size={12} />}
+            <span>{isPlaying ? "Speaking..." : "Voice"}</span>
+          </button>
         </div>
 
         {/* Message */}
@@ -119,101 +172,11 @@ interface Props {
   advisorStates?: Record<string, { state: string; details: string }>;
 }
 
-function ExecutiveBoardPanel({ activeAgents, advisorStates }: { activeAgents: string[]; advisorStates: Record<string, { state: string; details: string }> }) {
-  if (!activeAgents || activeAgents.length === 0) return null;
 
-  return (
-    <div style={{
-      marginBottom: 32,
-      background: "rgba(6,6,16,0.4)",
-      border: "1px solid rgba(255,255,255,0.06)",
-      borderRadius: 16,
-      padding: 16,
-    }}>
-      <div className="label-xs" style={{ marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span>Executive Boardroom Chamber</span>
-        <span className="mono" style={{ fontSize: 10, color: "rgba(255,255,255,0.25)" }}>{activeAgents.length} Seats Filled</span>
-      </div>
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-        gap: 12,
-      }}>
-        {activeAgents.map((role) => {
-          const cfg = ROLE_CONFIG[role] || { icon: Bot, label: role, accent: "#a8a8c0", border: "rgba(168,168,192,0.2)", glow: "transparent" };
-          const Icon = cfg.icon;
-          const statusInfo = advisorStates[role] || { state: "WAITING", details: "Awaiting conjoinment..." };
-
-          const statusColors: Record<string, { text: string; bg: string; led: string }> = {
-            WAITING:   { text: "rgba(255,255,255,0.3)", bg: "rgba(255,255,255,0.02)", led: "rgba(255,255,255,0.15)" },
-            THINKING:  { text: "#9b6dff", bg: "rgba(155,109,255,0.08)", led: "#9b6dff" },
-            SPEAKING:  { text: "#10b981", bg: "rgba(16,185,129,0.08)", led: "#10b981" },
-            REVIEWING: { text: "#4d5fff", bg: "rgba(74,95,255,0.06)", led: "#4d5fff" },
-            VOTING:    { text: "#f59e0b", bg: "rgba(245,158,11,0.08)", led: "#f59e0b" },
-            COMPLETED: { text: "#10b981", bg: "rgba(16,185,129,0.05)", led: "#10b981" },
-          };
-
-          const sc = statusColors[statusInfo.state] || statusColors.WAITING;
-
-          return (
-            <div
-              key={role}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "10px 12px",
-                background: statusInfo.state === "SPEAKING" ? `${cfg.accent}12` : "rgba(10,10,22,0.5)",
-                border: `1px solid ${statusInfo.state === "SPEAKING" || statusInfo.state === "THINKING" ? cfg.accent + "40" : "rgba(255,255,255,0.05)"}`,
-                borderRadius: 12,
-                transition: "all 0.25s cubic-bezier(0.16,1,0.3,1)",
-                boxShadow: statusInfo.state === "SPEAKING" ? `0 0 16px ${cfg.glow}` : "none",
-                position: "relative",
-                overflow: "hidden"
-              }}
-            >
-              {statusInfo.state === "THINKING" && (
-                <div style={{
-                  position: "absolute", inset: 0,
-                  background: `linear-gradient(90deg, transparent, ${cfg.accent}0f, transparent)`,
-                  animation: "shimmer 1.5s infinite linear",
-                }} />
-              )}
-              <div style={{
-                width: 30, height: 30, borderRadius: 9,
-                background: `${cfg.accent}14`,
-                border: `1px solid ${cfg.border}`,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                flexShrink: 0,
-              }}>
-                <Icon size={13} style={{ color: cfg.accent }} />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#f4f4ff", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
-                    {role}
-                  </span>
-                  <span style={{
-                    fontSize: 8, fontWeight: 700, color: sc.text, textTransform: "uppercase", letterSpacing: "0.04em",
-                    display: "flex", alignItems: "center", gap: 3
-                  }}>
-                    <span className={`led led-pulse`} style={{ width: 4, height: 4, background: sc.led }} />
-                    {statusInfo.state}
-                  </span>
-                </div>
-                <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap", marginTop: 2 }}>
-                  {statusInfo.details}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
 export default function DebateFeed({ turns, sessionState, activeAgents = [], advisorStates = {} }: Props) {
+  const { id: sessionId } = useParams<{ id: string }>();
+  const [activeChatRole, setActiveChatRole] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -261,12 +224,18 @@ export default function DebateFeed({ turns, sessionState, activeAgents = [], adv
 
   const round1 = turns.filter(t => t.round === 1);
   const round2 = turns.filter(t => t.round === 2);
+  const round3 = turns.filter(t => t.round === 3);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-      {/* Live active members panel */}
+      {/* Live active members projection */}
       {activeAgents.length > 0 && (
-        <ExecutiveBoardPanel activeAgents={activeAgents} advisorStates={advisorStates} />
+        <HolographicBoardroom 
+          activeAgents={activeAgents} 
+          advisorStates={advisorStates} 
+          turns={turns} 
+          onSelectAdvisor={(role) => setActiveChatRole(role)}
+        />
       )}
 
       {/* Round 1 */}
@@ -297,9 +266,23 @@ export default function DebateFeed({ turns, sessionState, activeAgents = [], adv
         </div>
       )}
 
+      {/* Round 3 */}
+      {round3.length > 0 && (
+        <div style={{ marginBottom: 32 }}>
+          <div className="sep-label" style={{ marginBottom: 20 }}>
+            Round 3 — Consensus & Synthesis
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            {round3.map((turn, i) => (
+              <MessageCard key={turn.id} turn={turn} index={round1.length + round2.length + i} />
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Typing indicator while active */}
       <AnimatePresence>
-        {["ROUND_1_ANALYSIS", "ROUND_2_DEBATE"].includes(sessionState) && (
+        {["ROUND_1_ANALYSIS", "ROUND_2_DEBATE", "ROUND_3_REVISION"].includes(sessionState) && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -334,6 +317,15 @@ export default function DebateFeed({ turns, sessionState, activeAgents = [], adv
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes blink { 0%,100% { opacity: 0.2; } 50% { opacity: 1; } }
       `}</style>
+
+      {activeChatRole && (
+        <AdvisorChatDrawer
+          role={activeChatRole}
+          sessionId={sessionId as string}
+          onClose={() => setActiveChatRole(null)}
+          accentColor={ROLE_CONFIG[activeChatRole]?.accent || "#4d5fff"}
+        />
+      )}
     </div>
   );
 }

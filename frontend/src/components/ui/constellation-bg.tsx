@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 
 export default function ConstellationBackground() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const mouseRef = useRef({ x: -1000, y: -1000, radius: 150 });
+  const mouseRef = useRef({ x: -1000, y: -1000, radius: 180 });
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -15,7 +15,10 @@ export default function ConstellationBackground() {
 
     let animationFrameId: number;
     let particles: Particle[] = [];
-    const particleCount = 75;
+    
+    // Split particles: 45 interactive connected nodes, 350 tiny background stars
+    const nodeCount = 45;
+    const starCount = 350;
 
     class Particle {
       x: number;
@@ -24,20 +27,35 @@ export default function ConstellationBackground() {
       vy: number;
       radius: number;
       baseColor: string;
+      isConnectedNode: boolean;
+      pulseSpeed: number;
+      pulsePhase: number;
 
-      constructor(w: number, h: number) {
+      constructor(w: number, h: number, isConnectedNode = false) {
         this.x = Math.random() * w;
         this.y = Math.random() * h;
-        // Slow, elegant drift
-        this.vx = (Math.random() - 0.5) * 0.28;
-        this.vy = (Math.random() - 0.5) * 0.28;
-        this.radius = Math.random() * 1.5 + 0.8;
+        this.isConnectedNode = isConnectedNode;
         
-        // Curated HSL colors matching CEO (blue), CTO (purple), PM (emerald)
+        if (this.isConnectedNode) {
+          // Connected nodes move slightly faster but still elegantly
+          this.vx = (Math.random() - 0.5) * 0.35;
+          this.vy = (Math.random() - 0.5) * 0.35;
+          this.radius = Math.random() * 1.5 + 1.2;
+        } else {
+          // Tiny stars drift extremely slowly
+          this.vx = (Math.random() - 0.5) * 0.12;
+          this.vy = (Math.random() - 0.5) * 0.12;
+          this.radius = Math.random() * 0.8 + 0.3;
+        }
+
+        this.pulseSpeed = Math.random() * 0.02 + 0.005;
+        this.pulsePhase = Math.random() * Math.PI * 2;
+
+        // Colors matching brand palette (Electric Blue, Purple, Emerald)
         const colors = [
-          "rgba(59, 130, 246, 0.45)",  // Blue
-          "rgba(168, 85, 247, 0.45)",  // Purple
-          "rgba(16, 185, 129, 0.45)",  // Emerald
+          "rgba(77, 95, 255, 0.35)",  // Brand Blue
+          "rgba(155, 109, 255, 0.35)", // Purple
+          "rgba(16, 185, 129, 0.30)",  // Emerald
         ];
         this.baseColor = colors[Math.floor(Math.random() * colors.length)];
       }
@@ -45,17 +63,20 @@ export default function ConstellationBackground() {
       update(w: number, h: number, mouseX: number, mouseY: number, mouseRadius: number) {
         this.x += this.vx;
         this.y += this.vy;
+        this.pulsePhase += this.pulseSpeed;
 
-        // Boundary bounce
-        if (this.x < 0 || this.x > w) this.vx *= -1;
-        if (this.y < 0 || this.y > h) this.vy *= -1;
+        // Boundary wrap
+        if (this.x < -10) this.x = w + 10;
+        if (this.x > w + 10) this.x = -10;
+        if (this.y < -10) this.y = h + 10;
+        if (this.y > h + 10) this.y = -10;
 
-        // Subtle pull toward mouse cursor
+        // Mouse attraction
         const dx = mouseX - this.x;
         const dy = mouseY - this.y;
         const dist = Math.hypot(dx, dy);
         if (dist < mouseRadius) {
-          const force = (mouseRadius - dist) / mouseRadius * 0.08;
+          const force = (mouseRadius - dist) / mouseRadius * 0.04;
           this.x += (dx / dist) * force;
           this.y += (dy / dist) * force;
         }
@@ -63,12 +84,20 @@ export default function ConstellationBackground() {
 
       draw(c: CanvasRenderingContext2D) {
         c.beginPath();
-        c.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-        c.fillStyle = this.baseColor;
-        c.shadowColor = this.baseColor;
-        c.shadowBlur = 4;
-        c.fill();
-        c.shadowBlur = 0; // reset
+        const pulse = Math.sin(this.pulsePhase) * 0.2 + 0.8;
+        c.arc(this.x, this.y, this.radius * pulse, 0, Math.PI * 2);
+        
+        if (this.isConnectedNode) {
+          c.fillStyle = this.baseColor;
+          c.shadowColor = this.baseColor;
+          c.shadowBlur = 6;
+          c.fill();
+          c.shadowBlur = 0; // reset
+        } else {
+          // Dimmer stars
+          c.fillStyle = this.baseColor.replace("0.35", "0.2").replace("0.30", "0.15");
+          c.fill();
+        }
       }
     }
 
@@ -79,8 +108,13 @@ export default function ConstellationBackground() {
       canvas.height = h;
 
       particles = [];
-      for (let i = 0; i < particleCount; i++) {
-        particles.push(new Particle(w, h));
+      // Convene active network nodes
+      for (let i = 0; i < nodeCount; i++) {
+        particles.push(new Particle(w, h, true));
+      }
+      // Populate background stars
+      for (let i = 0; i < starCount; i++) {
+        particles.push(new Particle(w, h, false));
       }
     };
 
@@ -93,8 +127,8 @@ export default function ConstellationBackground() {
       const { x: mx, y: my, radius: mr } = mouseRef.current;
       if (mx > 0 && my > 0) {
         const radGrad = ctx.createRadialGradient(mx, my, 0, mx, my, mr);
-        radGrad.addColorStop(0, "rgba(99, 102, 241, 0.04)");
-        radGrad.addColorStop(1, "rgba(99, 102, 241, 0)");
+        radGrad.addColorStop(0, "rgba(124, 58, 237, 0.05)");
+        radGrad.addColorStop(1, "rgba(124, 58, 237, 0)");
         ctx.fillStyle = radGrad;
         ctx.beginPath();
         ctx.arc(mx, my, mr, 0, Math.PI * 2);
@@ -107,21 +141,23 @@ export default function ConstellationBackground() {
         p.draw(ctx);
       });
 
-      // Draw connection lines
-      for (let i = 0; i < particles.length; i++) {
-        for (let j = i + 1; j < particles.length; j++) {
-          const dx = particles[i].x - particles[j].x;
-          const dy = particles[i].y - particles[j].y;
+      // Draw connection lines ONLY between active nodes
+      const nodes = particles.filter(p => p.isConnectedNode);
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const dx = nodes[i].x - nodes[j].x;
+          const dy = nodes[i].y - nodes[j].y;
           const dist = Math.hypot(dx, dy);
 
-          if (dist < 110) {
+          if (dist < 140) {
             ctx.beginPath();
-            ctx.moveTo(particles[i].x, particles[i].y);
-            ctx.lineTo(particles[j].x, particles[j].y);
+            ctx.moveTo(nodes[i].x, nodes[i].y);
+            ctx.lineTo(nodes[j].x, nodes[j].y);
+            
             // Dynamic opacity based on distance
-            const alpha = (110 - dist) / 110 * 0.12;
-            ctx.strokeStyle = `rgba(168, 85, 247, ${alpha})`;
-            ctx.lineWidth = 0.55;
+            const alpha = (140 - dist) / 140 * 0.14;
+            ctx.strokeStyle = `rgba(155, 109, 255, ${alpha})`;
+            ctx.lineWidth = 0.6;
             ctx.stroke();
           }
         }
@@ -162,8 +198,17 @@ export default function ConstellationBackground() {
   return (
     <canvas
       ref={canvasRef}
-      className="absolute inset-0 w-full h-full pointer-events-none select-none"
-      style={{ mixBlendMode: "screen" }}
+      className="pointer-events-none select-none"
+      style={{ 
+        position: "fixed",
+        top: 0,
+        left: 0,
+        width: "100vw",
+        height: "100vh",
+        mixBlendMode: "screen", 
+        zIndex: 1, 
+        opacity: 0.12 
+      }}
     />
   );
 }

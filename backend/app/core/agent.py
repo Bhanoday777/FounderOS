@@ -6,71 +6,28 @@ from google import genai
 from google.genai import types
 from ..schemas.session import Role, Vote, VoteOption, CategoryEvaluationDetail, AgentPenaltySuggestion
 from .personas import AGENT_PERSONAS
+from ..config import settings
 
 logger = logging.getLogger(__name__)
 
 class AgentVoteResponse(BaseModel):
-    vote: str = Field(..., description="The structured vote selection: APPROVE, CONDITIONALLY_APPROVE, REJECT (or CONDITIONAL)")
+    vote: str = Field(..., description="The structured vote selection: APPROVE, CONDITIONALLY_APPROVE, REJECT")
     confidence: int = Field(..., ge=0, le=100, description="Confidence rating between 0 and 100")
     
-    # CEO
-    innovation: Optional[int] = Field(None, ge=0, le=100)
-    vision: Optional[int] = Field(None, ge=0, le=100)
-    execution: Optional[int] = Field(None, ge=0, le=100)
-    strategy: Optional[int] = Field(None, ge=0, le=100)
-    
-    # CTO
-    technology: Optional[int] = Field(None, ge=0, le=100)
-    architecture: Optional[int] = Field(None, ge=0, le=100)
-    scalability: Optional[int] = Field(None, ge=0, le=100)
-    engineering_complexity: Optional[int] = Field(None, ge=0, le=100)
-    
-    # Investor
-    market: Optional[int] = Field(None, ge=0, le=100)
-    revenue: Optional[int] = Field(None, ge=0, le=100)
-    funding: Optional[int] = Field(None, ge=0, le=100)
-    moat: Optional[int] = Field(None, ge=0, le=100)
-    
-    # Product Manager
-    mvp: Optional[int] = Field(None, ge=0, le=100)
-    user_validation: Optional[int] = Field(None, ge=0, le=100)
-    feature_scope: Optional[int] = Field(None, ge=0, le=100)
-    
-    # Marketing
-    distribution: Optional[int] = Field(None, ge=0, le=100)
-    viral_coefficient: Optional[int] = Field(None, ge=0, le=100)
-    brand_positioning: Optional[int] = Field(None, ge=0, le=100)
-    
-    # Legal
-    compliance_overhead: Optional[int] = Field(None, ge=0, le=100)
-    liability_risks: Optional[int] = Field(None, ge=0, le=100)
-    ip_defensibility: Optional[int] = Field(None, ge=0, le=100)
-    
-    # Finance
-    financial: Optional[int] = Field(None, ge=0, le=100)
-    pricing_model: Optional[int] = Field(None, ge=0, le=100)
-    cogs_margin: Optional[int] = Field(None, ge=0, le=100)
-    runway_efficiency: Optional[int] = Field(None, ge=0, le=100)
-    
-    # Security
-    vulnerability_surface: Optional[int] = Field(None, ge=0, le=100)
-    credential_security: Optional[int] = Field(None, ge=0, le=100)
-    protocol_compliance: Optional[int] = Field(None, ge=0, le=100)
-    
-    # UX
-    onboarding_friction: Optional[int] = Field(None, ge=0, le=100)
-    usability: Optional[int] = Field(None, ge=0, le=100)
-    user_retention: Optional[int] = Field(None, ge=0, le=100)
-    
-    # Competition
-    competition: Optional[int] = Field(None, ge=0, le=100)
-    incumbent_threat: Optional[int] = Field(None, ge=0, le=100)
-    differentiation: Optional[int] = Field(None, ge=0, le=100)
-    switching_barriers: Optional[int] = Field(None, ge=0, le=100)
+    # 6 target categories. Each agent should only score the ones relevant to their role, leaving others None.
+    market_opportunity: Optional[int] = Field(None, ge=0, le=100, description="TAM, PMF, market demand, timing. Scored by CEO, Investor, Marketing, Competition, PM.")
+    technical_feasibility: Optional[int] = Field(None, ge=0, le=100, description="Tech stack, engineering difficulty, build time. Scored by CTO, Security.")
+    financial_viability: Optional[int] = Field(None, ge=0, le=100, description="Pricing model, COGS, burn, economics, runway. Scored by Finance, Investor.")
+    execution_readiness: Optional[int] = Field(None, ge=0, le=100, description="MVP scope, UX friction, regulatory, timeline. Scored by PM, UX, Legal.")
+    competitive_advantage: Optional[int] = Field(None, ge=0, le=100, description="Moat, switching barriers, differentiation. Scored by Competition, CEO, Investor, Marketing.")
+    risk: Optional[int] = Field(None, ge=0, le=100, description="Risk safety score (100 = low risk, 0 = high risk). Scored by Security, Legal, Finance, CTO, Investor.")
 
     strengths: List[str] = Field(..., description="Top 2-3 key strategic strengths of the startup")
     weaknesses: List[str] = Field(..., description="Top 2-3 core weaknesses of the startup")
     critical_risks: List[str] = Field(..., description="Top 1-2 critical risks or execution bottlenecks")
+    
+    critical_assumption: str = Field(..., description="The single most critical assumption you are making to support your vote")
+    biggest_concern: str = Field(..., description="The single biggest concern or risk you see for this startup")
     
     penalties: List[AgentPenaltySuggestion] = Field(
         default_factory=list,
@@ -149,48 +106,56 @@ class BoardAgent:
         }
         focus_prompt = role_focuses.get(self.role, "Analyze the startup idea from your specialized department perspective.")
 
-        if round == 2:
+        if round == 1:
             dynamics_instruction = (
-                "MEETING DYNAMICS — ROUND 2 CROSS-EXAMINATION: You are now in the cross-examination round. "
-                "You MUST directly reference at least one other board member's Round 1 opinion by name. "
-                "Examples: 'I disagree with the Investor — their CAC concern ignores the organic loop potential...', "
-                "'The CTO correctly identifies the sharding risk, but the real issue is...', "
-                "'I challenge the CEO's TAM estimate — the assumption of 10% penetration is not justified because...'. "
-                "Be direct and specific. This is a debate, not a monologue. Drive toward the most critical unresolved issue."
+                "MEETING DYNAMICS — ROUND 1 INDEPENDENT ANALYSIS:\n"
+                "This is your independent, unfiltered assessment. Evaluate the startup idea solely based on the details provided.\n"
+                "CRITICAL EVIDENCE RULES:\n"
+                "- Do NOT invent data like revenue, margins, CAC, LTV, retention, or infra costs if they are not explicitly provided.\n"
+                "- If data is missing, list it explicitly under 'Missing Information'. Don't guess.\n"
+                "- Focus on: Can this risk be mitigated? rather than just listing negatives."
+            )
+        elif round == 2:
+            dynamics_instruction = (
+                "MEETING DYNAMICS — ROUND 2 CROSS-EXAMINATION:\n"
+                "Read the other advisors' Round 1 assessments. Agree where appropriate, challenge weak assumptions, support good ideas, "
+                "identify contradictions, and build upon useful suggestions. Do NOT repeat your original opinion.\n"
+                "You MUST directly reference at least one other board member by name (e.g., 'I disagree with the Investor...', "
+                "'The CTO correctly identified...')."
             )
         else:
             dynamics_instruction = (
-                "MEETING DYNAMICS — ROUND 1 INDEPENDENT ANALYSIS: This is your independent, unfiltered assessment. "
-                "Address the board directly. Be specific about target niche, scaling risks, and budget constraints. "
-                "Raise the sharpest concern from your domain that others may have missed."
+                "MEETING DYNAMICS — ROUND 3 CONSENSUS & REVISION:\n"
+                "Formulate your revised opinion looking for consensus. Explicitly mention peer perspectives (e.g., 'After hearing the CTO...', "
+                "'I agree with the CFO...'). Focus on whether the overall opportunity outweighs the mitigated risks.\n"
+                "Enforce the final consensus alignment."
             )
 
         system_instruction = (
             f"{self.persona}\n\n"
-            f"You are in a live multi-agent executive board meeting evaluating a startup idea.\n"
-            f"CRITICAL INSTRUCTIONS:\n"
+            f"You are in a live multi-agent executive board meeting evaluating a startup concept.\n"
+            f"CRITICAL DIALOGUE INSTRUCTIONS:\n"
             f"1. DOMAIN FOCUS: {focus_prompt}\n"
-            f"2. DEPTH: Give 2-3 substantive paragraphs directly evaluating this specific startup. Use real metrics, "
-            f"real terminology, and specific concerns — not platitudes. Every sentence must add analytical value.\n"
-            f"3. {dynamics_instruction}\n"
-            f"4. SPECIFICITY: Reference specific aspects of this startup concept (the industry, the model, the users). "
-            f"Never give advice that could apply to any startup.\n"
-            f"5. NO SCORES: Do NOT include any numeric rating or overall score. The board orchestrator computes scores. "
-            f"You provide qualitative executive judgment only."
+            f"2. {dynamics_instruction}\n"
+            f"3. ROLE FIDELITY: Stay strictly within your expert domain. Never comment on other departments unless responding directly to a peer during debate.\n"
+            f"4. EVIDENCE HIERARCHY: Prioritize explicit founder details -> industry knowledge -> labeled assumptions -> unknowns.\n"
+            f"5. NO MARKDOWN TEMPLATES: Do NOT use section headers (like '###', '##'), bulleted tables, or long-form reports. "
+            f"This is a verbal boardroom discussion, not a written memo. Speak in 1-2 concise, conversational, but highly analytical paragraphs "
+            f"(between 100 and 150 words max). Be direct, professional, and clear."
         )
 
         prompt = (
             f"Startup Idea: {idea}\n\n"
             f"Debate History So Far:\n"
             + "\n".join(history)
-            + f"\n\nNow, write your assessment for Round {round}."
+            + f"\n\nNow, write your spoken comments for Round {round}."
         )
 
-        if self.client:
+        if self.client and not settings.offline_demo:
             try:
                 response = await anyio.to_thread.run_sync(
                     lambda: self.client.models.generate_content(
-                        model="gemini-2.5-flash",
+                        model=settings.gemini_model,
                         contents=prompt,
                         config=types.GenerateContentConfig(
                             system_instruction=system_instruction,
@@ -209,36 +174,31 @@ class BoardAgent:
         """
         Asynchronously casts a structured vote using Gemini API or a role-specific mock fallback.
         """
-        role_subcategories = {
-            Role.CEO: "innovation, vision, execution, strategy",
-            Role.CTO: "technology, architecture, scalability, engineering_complexity",
-            Role.INVESTOR: "market, revenue, funding, moat",
-            Role.PRODUCT_MANAGER: "execution, mvp, user_validation, feature_scope",
-            Role.MARKETING: "market, distribution, viral_coefficient, brand_positioning",
-            Role.LEGAL: "execution, compliance_overhead, liability_risks, ip_defensibility",
-            Role.FINANCE: "financial, pricing_model, cogs_margin, runway_efficiency",
-            Role.SECURITY: "technology, vulnerability_surface, credential_security, protocol_compliance",
-            Role.UX: "execution, onboarding_friction, usability, user_retention",
-            Role.COMPETITION: "competition, incumbent_threat, differentiation, switching_barriers, ip_defensibility"
+        role_categories = {
+            Role.CEO: "market_opportunity, execution_readiness, competitive_advantage",
+            Role.CTO: "technical_feasibility, risk",
+            Role.INVESTOR: "market_opportunity, financial_viability, competitive_advantage, risk",
+            Role.PRODUCT_MANAGER: "execution_readiness, market_opportunity",
+            Role.MARKETING: "market_opportunity, competitive_advantage",
+            Role.LEGAL: "execution_readiness, risk",
+            Role.FINANCE: "financial_viability, risk",
+            Role.SECURITY: "technical_feasibility, risk",
+            Role.UX: "execution_readiness",
+            Role.COMPETITION: "competitive_advantage, market_opportunity"
         }
-        cats = role_subcategories.get(self.role, "innovation, execution")
+        cats = role_categories.get(self.role, "market_opportunity, execution_readiness")
 
         system_instruction = (
             f"{self.persona}\n\n"
             f"The board discussion has concluded. You must now cast your structured vote on the startup idea.\n"
             f"CRITICAL INSTRUCTIONS:\n"
-            f"1. CATEGORY OWNERSHIP: You ONLY score subcategories you own as {self.role.value}. Specifically populate: {cats}. Leave all other fields null.\n"
-            f"2. VOTE ALIGNMENT: Your vote (APPROVE, CONDITIONALLY_APPROVE, REJECT) must honestly reflect the discussion and your domain expertise.\n"
-            f"3. REASONING (100-150 words, YC partner style): Justify your decision with specific observations. Include:\n"
-            f"   - 2-3 concrete STRENGTHS you identified (use strengths field)\n"
-            f"   - 2-3 concrete WEAKNESSES or risks (use weaknesses field)\n"
-            f"   - 1-2 critical UNKNOWNS that could change your vote (use critical_risks field)\n"
-            f"   - At least one specific metric or benchmark relevant to your domain (e.g., LTV/CAC, gross margin %, p99 latency, WCAG score)\n"
-            f"4. BLOCKING CONCERN: If REJECT or CONDITIONALLY_APPROVE, specify the single most critical blocker preventing approval. Be precise and specific to this startup.\n"
-            f"5. PENALTIES: From this list — No revenue model (-10), Weak competitive moat (-15), Impossible technology (-25), "
-            f"High customer acquisition cost (-12), Weak differentiation (-10), Poor scalability (-8), Heavy regulation (-10), "
-            f"Security concerns (-10), Overly ambitious MVP (-8), Unsupported founder assumptions (-10) — "
-            f"flag any that apply and include them in the penalties list. Do NOT assign an overall score."
+            f"1. CATEGORY OWNERSHIP: You ONLY score categories you own as {self.role.value}. Specifically populate: {cats}. Leave all other fields null.\n"
+            f"2. VOTE ALIGNMENT: Your vote (APPROVE, CONDITIONALLY_APPROVE, REJECT) must honestly reflect the debate. Reject only if a critical flaw cannot realistically be mitigated. Prefer Conditional if risks are solvable.\n"
+            f"3. CRITICAL ASSUMPTION: Specify the single most critical assumption you are making to support your vote (use critical_assumption field).\n"
+            f"4. BIGGEST CONCERN: Specify the single biggest concern/risk you see (use biggest_concern field).\n"
+            f"5. REASONING (100-150 words): Justify your decision citing explicit evidence or missing info.\n"
+            f"6. PENALTIES: Assign relevant penalties from the options list if applicable.\n"
+            f"7. CONFIDENCE: Rate from 0 to 100%. Decrease confidence if you made many assumptions."
         )
 
         prompt = (
@@ -248,11 +208,11 @@ class BoardAgent:
             + f"\n\nBased on this board discussion, cast your final vote."
         )
 
-        if self.client:
+        if self.client and not settings.offline_demo:
             try:
                 response = await anyio.to_thread.run_sync(
                     lambda: self.client.models.generate_content(
-                        model="gemini-2.5-flash",
+                        model=settings.gemini_model,
                         contents=prompt,
                         config=types.GenerateContentConfig(
                             system_instruction=system_instruction,
@@ -266,76 +226,24 @@ class BoardAgent:
                     parsed = AgentVoteResponse.model_validate_json(response.text)
                     
                     sub_scores = {
-                        "innovation": parsed.innovation,
-                        "vision": parsed.vision,
-                        "strategy": parsed.strategy,
-                        "technology": parsed.technology,
-                        "architecture": parsed.architecture,
-                        "scalability": parsed.scalability,
-                        "engineering_complexity": parsed.engineering_complexity,
-                        "vulnerability_surface": parsed.vulnerability_surface,
-                        "credential_security": parsed.credential_security,
-                        "protocol_compliance": parsed.protocol_compliance,
-                        "execution": parsed.execution,
-                        "mvp": parsed.mvp,
-                        "user_validation": parsed.user_validation,
-                        "feature_scope": parsed.feature_scope,
-                        "compliance_overhead": parsed.compliance_overhead,
-                        "liability_risks": parsed.liability_risks,
-                        "onboarding_friction": parsed.onboarding_friction,
-                        "usability": parsed.usability,
-                        "user_retention": parsed.user_retention,
-                        "market": parsed.market,
-                        "distribution": parsed.distribution,
-                        "viral_coefficient": parsed.viral_coefficient,
-                        "brand_positioning": parsed.brand_positioning,
-                        "financial": parsed.financial,
-                        "revenue": parsed.revenue,
-                        "funding": parsed.funding,
-                        "pricing_model": parsed.pricing_model,
-                        "cogs_margin": parsed.cogs_margin,
-                        "runway_efficiency": parsed.runway_efficiency,
-                        "competition": parsed.competition,
-                        "moat": parsed.moat,
-                        "differentiation": parsed.differentiation,
-                        "incumbent_threat": parsed.incumbent_threat,
-                        "switching_barriers": parsed.switching_barriers,
-                        "ip_defensibility": parsed.ip_defensibility,
+                        "Market Opportunity": parsed.market_opportunity,
+                        "Technical Feasibility": parsed.technical_feasibility,
+                        "Financial Viability": parsed.financial_viability,
+                        "Execution Readiness": parsed.execution_readiness,
+                        "Competitive Advantage": parsed.competitive_advantage,
+                        "Risk": parsed.risk,
                     }
                     
-                    flat_evals = {}
-                    for board_cat, sub_list in {
-                        "Innovation": ["innovation", "vision", "strategy"],
-                        "Technology": ["technology", "architecture", "scalability", "engineering_complexity", "vulnerability_surface", "credential_security", "protocol_compliance"],
-                        "Execution": ["execution", "mvp", "user_validation", "feature_scope", "compliance_overhead", "liability_risks", "onboarding_friction", "usability", "user_retention"],
-                        "Market": ["market", "distribution", "viral_coefficient", "brand_positioning"],
-                        "Financial": ["financial", "revenue", "funding", "pricing_model", "cogs_margin", "runway_efficiency"],
-                        "Competition": ["competition", "moat", "differentiation", "incumbent_threat", "switching_barriers", "ip_defensibility"]
-                    }.items():
-                        vals = [sub_scores[s] for s in sub_list if sub_scores.get(s) is not None]
-                        if vals:
-                            flat_evals[board_cat] = round(sum(vals) / len(vals))
-
+                    flat_evals = {k: v for k, v in sub_scores.items() if v is not None}
                     details = []
-                    for board_cat, sub_list in {
-                        "Innovation": ["innovation", "vision", "strategy"],
-                        "Technology": ["technology", "architecture", "scalability", "engineering_complexity", "vulnerability_surface", "credential_security", "protocol_compliance"],
-                        "Execution": ["execution", "mvp", "user_validation", "feature_scope", "compliance_overhead", "liability_risks", "onboarding_friction", "usability", "user_retention"],
-                        "Market": ["market", "distribution", "viral_coefficient", "brand_positioning"],
-                        "Financial": ["financial", "revenue", "funding", "pricing_model", "cogs_margin", "runway_efficiency"],
-                        "Competition": ["competition", "moat", "differentiation", "incumbent_threat", "switching_barriers", "ip_defensibility"]
-                    }.items():
-                        if board_cat in flat_evals:
-                            sub_strs = [f"{s.replace('_', ' ').capitalize()} ({sub_scores[s]})" for s in sub_list if sub_scores.get(s) is not None]
-                            reason_str = f"Evaluated by {self.role.value}: {', '.join(sub_strs)}."
-                            val = flat_evals[board_cat]
-                            details.append(CategoryEvaluationDetail(
-                                category=board_cat,
-                                score=val,
-                                confidence=parsed.confidence,
-                                risk_level="LOW" if val >= 70 else "MEDIUM" if val >= 45 else "HIGH",
-                                reason=reason_str
-                            ))
+                    for cat, val in flat_evals.items():
+                        details.append(CategoryEvaluationDetail(
+                            category=cat,
+                            score=val,
+                            confidence=parsed.confidence,
+                            risk_level="LOW" if val >= 70 else "MEDIUM" if val >= 45 else "HIGH",
+                            reason=f"Evaluated by {self.role.value} with confidence {parsed.confidence}%."
+                        ))
 
                     vote_str = parsed.vote.upper().strip()
                     if vote_str == "CONDITIONAL" or vote_str == "CONDITIONALLY_APPROVE":
@@ -353,7 +261,9 @@ class BoardAgent:
                         category_details=details,
                         reasoning=parsed.reasoning,
                         blocking_concern=parsed.blocking_concern,
-                        penalties=parsed.penalties
+                        penalties=parsed.penalties,
+                        critical_assumption=parsed.critical_assumption,
+                        biggest_concern=parsed.biggest_concern
                     )
             except Exception as e:
                 logger.error(f"Error calling Gemini in cast_vote for {self.role}: {e}")
@@ -812,34 +722,52 @@ class BoardAgent:
         is_physical = self._is_physical_logistics(idea)
         
         calib = get_calibration_scores(idea)
-        base_scores = calib.copy() if calib else {
-            "innovation": 80, "vision": 80, "strategy": 80,
-            "technology": 80, "architecture": 80, "scalability": 80, "engineering_complexity": 80,
-            "market": 80, "revenue": 80, "funding": 80, "moat": 80,
-            "mvp": 80, "user_validation": 80, "feature_scope": 80,
-            "execution": 80, "distribution": 80, "viral_coefficient": 80, "brand_positioning": 80,
-            "compliance_overhead": 80, "liability_risks": 80, "ip_defensibility": 80,
-            "financial": 80, "pricing_model": 80, "cogs_margin": 80, "runway_efficiency": 80,
-            "vulnerability_surface": 80, "credential_security": 80, "protocol_compliance": 80,
-            "onboarding_friction": 80, "usability": 80, "user_retention": 80,
-            "competition": 80, "incumbent_threat": 80, "differentiation": 80, "switching_barriers": 80
-        }
+        if calib:
+            base_scores = calib.copy()
+        else:
+            h = sum(ord(c) for c in idea)
+            base_scores = {
+                "Market Opportunity": 65 + (h % 15),
+                "Technical Feasibility": 60 + ((h * 3) % 21),
+                "Financial Viability": 55 + ((h * 7) % 26),
+                "Execution Readiness": 50 + ((h * 13) % 28),
+                "Competitive Advantage": 58 + ((h * 17) % 22),
+                "Risk": 62 + ((h * 31) % 19)
+            }
+        
+        # Adjust based on negative signals in idea
+        idea_lower = idea.lower()
+        if "guaranteed" in idea_lower and "crypto" in idea_lower:
+            base_scores["Risk"] = 20
+            base_scores["Financial Viability"] = 30
+        elif "hacking" in idea_lower or "illegal" in idea_lower:
+            base_scores["Risk"] = 15
+            base_scores["Execution Readiness"] = 25
+        elif "teleportation" in idea_lower or "impossible" in idea_lower:
+            base_scores["Technical Feasibility"] = 10
+            base_scores["Risk"] = 20
+        elif "pdf wrapper" in idea_lower or ("pdf" in idea_lower and "wrapper" in idea_lower):
+            base_scores["Competitive Advantage"] = 30
+            base_scores["Market Opportunity"] = 40
+        elif "keyboard" in idea_lower and "rental" in idea_lower:
+            base_scores["Financial Viability"] = 50
+            base_scores["Execution Readiness"] = 60
 
         # Filter categories by ownership
-        role_owned_fields = {
-            Role.CEO: ["innovation", "vision", "execution", "strategy"],
-            Role.CTO: ["technology", "architecture", "scalability", "engineering_complexity"],
-            Role.INVESTOR: ["market", "revenue", "funding", "moat"],
-            Role.PRODUCT_MANAGER: ["execution", "mvp", "user_validation", "feature_scope"],
-            Role.MARKETING: ["market", "distribution", "viral_coefficient", "brand_positioning"],
-            Role.LEGAL: ["execution", "compliance_overhead", "liability_risks", "ip_defensibility"],
-            Role.FINANCE: ["financial", "pricing_model", "cogs_margin", "runway_efficiency"],
-            Role.SECURITY: ["technology", "vulnerability_surface", "credential_security", "protocol_compliance"],
-            Role.UX: ["execution", "onboarding_friction", "usability", "user_retention"],
-            Role.COMPETITION: ["competition", "incumbent_threat", "differentiation", "switching_barriers", "ip_defensibility"]
+        role_owned_categories = {
+            Role.CEO: ["Market Opportunity", "Execution Readiness", "Competitive Advantage"],
+            Role.CTO: ["Technical Feasibility", "Risk"],
+            Role.INVESTOR: ["Market Opportunity", "Financial Viability", "Competitive Advantage", "Risk"],
+            Role.PRODUCT_MANAGER: ["Execution Readiness", "Market Opportunity"],
+            Role.MARKETING: ["Market Opportunity", "Competitive Advantage"],
+            Role.LEGAL: ["Execution Readiness", "Risk"],
+            Role.FINANCE: ["Financial Viability", "Risk"],
+            Role.SECURITY: ["Technical Feasibility", "Risk"],
+            Role.UX: ["Execution Readiness"],
+            Role.COMPETITION: ["Competitive Advantage", "Market Opportunity"]
         }
-        owned = role_owned_fields.get(self.role, ["innovation", "execution"])
-        scores = {k: v for k, v in base_scores.items() if k in owned}
+        owned = role_owned_categories.get(self.role, ["Market Opportunity", "Execution Readiness"])
+        flat_evals = {k: v for k, v in base_scores.items() if k in owned}
 
         # Determine vote and reasoning based on role and idea
         vote_opt = VoteOption.APPROVE
@@ -848,8 +776,7 @@ class BoardAgent:
         blocking_concern = None
         penalties = []
 
-        idea_lower = idea.lower()
-        if "guaranteed" in idea_lower and "crypto" in idea_lower:
+        if "guarante" in idea_lower and "crypto" in idea_lower:
             vote_opt = VoteOption.REJECT
             confidence = 90
             reasoning = "Guaranteed returns on crypto are inherently speculative and present severe regulatory risks."
@@ -929,39 +856,15 @@ class BoardAgent:
                 confidence = 80
                 reasoning = f"Pruning the MVP to a single-page dashboard focusing strictly on {kw1} telemetry ensures execution success."
 
-        flat_evals = {}
-        for board_cat, sub_list in {
-            "Innovation": ["innovation", "vision", "strategy"],
-            "Technology": ["technology", "architecture", "scalability", "engineering_complexity", "vulnerability_surface", "credential_security", "protocol_compliance"],
-            "Execution": ["execution", "mvp", "user_validation", "feature_scope", "compliance_overhead", "liability_risks", "onboarding_friction", "usability", "user_retention"],
-            "Market": ["market", "distribution", "viral_coefficient", "brand_positioning"],
-            "Financial": ["financial", "revenue", "funding", "pricing_model", "cogs_margin", "runway_efficiency"],
-            "Competition": ["competition", "moat", "differentiation", "incumbent_threat", "switching_barriers", "ip_defensibility"]
-        }.items():
-            vals = [scores[s] for s in sub_list if scores.get(s) is not None]
-            if vals:
-                flat_evals[board_cat] = round(sum(vals) / len(vals))
-
         category_details = []
-        for board_cat, sub_list in {
-            "Innovation": ["innovation", "vision", "strategy"],
-            "Technology": ["technology", "architecture", "scalability", "engineering_complexity", "vulnerability_surface", "credential_security", "protocol_compliance"],
-            "Execution": ["execution", "mvp", "user_validation", "feature_scope", "compliance_overhead", "liability_risks", "onboarding_friction", "usability", "user_retention"],
-            "Market": ["market", "distribution", "viral_coefficient", "brand_positioning"],
-            "Financial": ["financial", "revenue", "funding", "pricing_model", "cogs_margin", "runway_efficiency"],
-            "Competition": ["competition", "moat", "differentiation", "incumbent_threat", "switching_barriers", "ip_defensibility"]
-        }.items():
-            if board_cat in flat_evals:
-                sub_strs = [f"{s.replace('_', ' ').capitalize()} ({scores[s]})" for s in sub_list if scores.get(s) is not None]
-                reason_str = f"Qualitative evaluation by {self.role.value}: {', '.join(sub_strs)}."
-                val = flat_evals[board_cat]
-                category_details.append(CategoryEvaluationDetail(
-                    category=board_cat,
-                    score=val,
-                    confidence=confidence,
-                    risk_level="LOW" if val >= 70 else "MEDIUM" if val >= 45 else "HIGH",
-                    reason=reason_str
-                ))
+        for cat, val in flat_evals.items():
+            category_details.append(CategoryEvaluationDetail(
+                category=cat,
+                score=val,
+                confidence=confidence,
+                risk_level="LOW" if val >= 70 else "MEDIUM" if val >= 45 else "HIGH",
+                reason=f"Qualitative evaluation by {self.role.value} for {cat}."
+            ))
 
         return Vote(
             role=self.role,
@@ -971,7 +874,9 @@ class BoardAgent:
             category_details=category_details,
             reasoning=reasoning,
             blocking_concern=blocking_concern,
-            penalties=penalties
+            penalties=penalties,
+            critical_assumption=f"Assuming {kw1} has a viable target customer base.",
+            biggest_concern=blocking_concern or f"Sustained customer acquisition loop for {kw1}."
         )
 
 
@@ -979,56 +884,94 @@ def get_calibration_scores(idea: str) -> Optional[Dict[str, int]]:
     idea_lower = idea.lower()
     
     # 1. Guaranteed Crypto Millionaire Startup
-    if "guaranteed" in idea_lower and "crypto" in idea_lower:
-        val = 30
+    if "guarante" in idea_lower and "crypto" in idea_lower:
+        return {
+            "Market Opportunity": 48,
+            "Technical Feasibility": 60,
+            "Financial Viability": 18,
+            "Execution Readiness": 22,
+            "Competitive Advantage": 30,
+            "Risk": 12
+        }
     # 2. Illegal Hacking Startup
     elif "hacking" in idea_lower or "illegal" in idea_lower:
-        val = 27
+        return {
+            "Market Opportunity": 35,
+            "Technical Feasibility": 75,
+            "Financial Viability": 20,
+            "Execution Readiness": 10,
+            "Competitive Advantage": 40,
+            "Risk": 8
+        }
     # 3. Impossible Teleportation Startup
     elif "teleportation" in idea_lower or "impossible" in idea_lower:
         return {
-            "innovation": 90, "vision": 90, "strategy": 90,
-            "technology": 30, "architecture": 30, "scalability": 30, "engineering_complexity": 30,
-            "market": 30, "revenue": 30, "funding": 30, "moat": 30,
-            "mvp": 30, "user_validation": 30, "feature_scope": 30,
-            "execution": 30, "distribution": 30, "viral_coefficient": 30, "brand_positioning": 30,
-            "compliance_overhead": 30, "liability_risks": 30, "ip_defensibility": 30,
-            "financial": 30, "pricing_model": 30, "cogs_margin": 30, "runway_efficiency": 30,
-            "vulnerability_surface": 30, "credential_security": 30, "protocol_compliance": 30,
-            "onboarding_friction": 30, "usability": 30, "user_retention": 30,
-            "competition": 30, "incumbent_threat": 30, "differentiation": 30, "switching_barriers": 30
+            "Market Opportunity": 90,
+            "Technical Feasibility": 10,
+            "Financial Viability": 30,
+            "Execution Readiness": 30,
+            "Competitive Advantage": 30,
+            "Risk": 20
         }
     # 4. Generic AI PDF Wrapper
     elif "pdf wrapper" in idea_lower or ("pdf" in idea_lower and "wrapper" in idea_lower):
-        val = 67
+        return {
+            "Market Opportunity": 62,
+            "Technical Feasibility": 92,
+            "Financial Viability": 68,
+            "Execution Readiness": 85,
+            "Competitive Advantage": 20,
+            "Risk": 70
+        }
     # 5. Mechanical Keyboard Rental
     elif "keyboard" in idea_lower and "rental" in idea_lower:
-        val = 73
+        return {
+            "Market Opportunity": 55,
+            "Technical Feasibility": 85,
+            "Financial Viability": 48,
+            "Execution Readiness": 65,
+            "Competitive Advantage": 52,
+            "Risk": 60
+        }
     # 6. Marketplace
     elif "marketplace" in idea_lower or "board games" in idea_lower:
-        val = 60
+        return {
+            "Market Opportunity": 68,
+            "Technical Feasibility": 82,
+            "Financial Viability": 58,
+            "Execution Readiness": 70,
+            "Competitive Advantage": 50,
+            "Risk": 65
+        }
     # 7. Healthcare AI
     elif "healthcare" in idea_lower or "medical" in idea_lower:
-        val = 75
+        return {
+            "Market Opportunity": 85,
+            "Technical Feasibility": 68,
+            "Financial Viability": 75,
+            "Execution Readiness": 40,
+            "Competitive Advantage": 72,
+            "Risk": 45
+        }
     # 8. Cybersecurity SaaS
     elif "cybersecurity" in idea_lower or "security saas" in idea_lower:
-        val = 80
+        return {
+            "Market Opportunity": 88,
+            "Technical Feasibility": 65,
+            "Financial Viability": 82,
+            "Execution Readiness": 70,
+            "Competitive Advantage": 78,
+            "Risk": 75
+        }
     # 9. Enterprise AI Compliance Platform
     elif "enterprise ai compliance" in idea_lower or "compliance platform" in idea_lower or "decentralized ai code review" in idea_lower:
-        val = 83
+        return {
+            "Market Opportunity": 92,
+            "Technical Feasibility": 72,
+            "Financial Viability": 85,
+            "Execution Readiness": 78,
+            "Competitive Advantage": 80,
+            "Risk": 80
+        }
     else:
         return None
-
-    sub_cats = [
-        "innovation", "vision", "execution", "strategy",
-        "technology", "architecture", "scalability", "engineering_complexity",
-        "market", "revenue", "funding", "moat",
-        "mvp", "user_validation", "feature_scope",
-        "distribution", "viral_coefficient", "brand_positioning",
-        "compliance_overhead", "liability_risks", "ip_defensibility",
-        "financial", "pricing_model", "cogs_margin", "runway_efficiency",
-        "vulnerability_surface", "credential_security", "protocol_compliance",
-        "onboarding_friction", "usability", "user_retention",
-        "competition", "incumbent_threat", "differentiation", "switching_barriers"
-    ]
-    return {sc: val for sc in sub_cats}
