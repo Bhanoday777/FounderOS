@@ -82,7 +82,7 @@ const FEATURES = [
   { label: "10 Specialized Reports",   color: "#06b6d4" },
 ];
 
-const MAX_CHARS = 600;
+const MAX_CHARS = 10000;
 
 export default function CommandCenterPage() {
   const router = useRouter();
