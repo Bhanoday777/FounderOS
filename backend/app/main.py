@@ -10,7 +10,7 @@ import time
 from .config import settings
 from .schemas.session import BoardroomSession, Role, SessionState, StartupHealthScore, VoteOption
 from .database.repository import SessionRepository
-from .database.memory_db import InMemorySessionRepository
+from .database.sqlite_db import SQLiteSessionRepository
 from .core.board import BoardOrchestrator
 from pydantic import BaseModel, Field
 
@@ -39,7 +39,7 @@ app.add_middleware(
 )
 
 # Repository singleton injection provider
-_repository_singleton = InMemorySessionRepository()
+_repository_singleton = SQLiteSessionRepository()
 
 def get_repository() -> SessionRepository:
     return _repository_singleton
