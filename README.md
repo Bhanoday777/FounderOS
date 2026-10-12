@@ -1,88 +1,150 @@
-# 🌐 FounderOS — Interactive Multi-Agent Advisory Boardroom
+# FounderOS: Multi-Agent Advisory Boardroom
 
-FounderOS is a premium, multi-agent AI system designed to simulate an executive boardroom. Instead of spending months and thousands of dollars consulting human experts, founders can pitch their concepts to 10 specialized virtual advisors who debate the idea, identify risks, and evaluate startup viability inside an interactive 3D virtual boardroom.
+Pitch a startup idea to a board of 10 AI advisors. They critique it from their own angle, cross-examine each other, and vote, all streamed live into an interactive boardroom.
 
 Built for the **Google AI Hackathon 2026**.
 
----
-
-## ✨ Key Features
-
-*   **🌐 Interactive 3D Holographic Boardroom**: A mouse-interactive visual boardroom map built on HTML5 Canvas representing the advisors, active states (Waiting, Thinking, Speaking, Reviewing), and dynamic laser links showing consensus routing.
-*   **🗣️ Zero-Dependency Voice Engine (TTS/STT)**: Uses browser-native Web Speech APIs to speak critiques in distinct advisor vocal rates and pitches, and allows the founder to speak their pitch answers directly using microphone dictation.
-*   **🧠 Coordinated Multi-Agent Debate**: real-time step-by-step streaming (via FastAPI SSE) where 10 specialized board members critique the concept, cross-examine each other's points, and cast structured votes (Approve, Conditionally Approve, Reject).
-*   **🎛️ Interactive Sandbox Tab**: A dashboard panel allowing the founder to override advisor weighting coefficients, apply compliance/security penalties, and trigger instant health score recalculations.
-*   **🛡️ Robust Offline Fallback Mode**: Designed with automatic catch-block interceptors that gracefully bypass Google API rate limits (429/404 errors) and use local high-fidelity mock generators to ensure a 100% uptime demo.
+![Next.js](https://img.shields.io/badge/Next.js-16-black)
+![FastAPI](https://img.shields.io/badge/FastAPI-Python_3.12-009688)
+![Gemini](https://img.shields.io/badge/Google-Gemini-4285F4)
+![CI](https://github.com/Bhanoday777/FounderOS/actions/workflows/ci.yml/badge.svg)
 
 ---
 
-## 🛠️ Architecture & Tech Stack
+## What it does
+
+1. The founder submits a pitch (typed or dictated by voice).
+2. Ten advisor agents, each with its own system prompt, incentives and biases, review it in sequence: CEO, CTO, Investor, Product Manager, Marketing, Legal, Finance, Security, UX and Competition.
+3. Advisors respond to each other's points, then each casts a structured vote: **Approve**, **Conditionally Approve** or **Reject**.
+4. The votes are combined into a weighted viability score. The founder can change advisor weights in the Sandbox tab and recalculate instantly.
+5. The finished session can be exported as JSON, Markdown or HTML and revisited later in the Strategy Vault.
+
+## Key features
+
+- **Live debate streaming.** The backend streams each advisor's turn to the UI over Server-Sent Events, so the debate plays out in real time rather than arriving as one block.
+- **Interactive boardroom visualisation.** An HTML5 Canvas view shows each advisor's state (waiting, thinking, speaking, reviewing) and draws links between agents as consensus forms.
+- **Voice in and out.** Advisors read their critiques aloud with distinct voices, and founders can answer by speaking, using the browser's built-in Web Speech API with no extra dependencies.
+- **Follow-up tools.** Chat one-on-one with any advisor, and run a Pitch Drill that evaluates your answers to tough questions.
+- **Offline demo mode.** When the Gemini API is unavailable or rate-limited, the backend falls back to local mock responses so the demo never breaks.
+- **Persistent sessions.** Boardroom sessions are stored in SQLite behind a repository interface, so the storage layer can be swapped out.
+
+## Architecture
 
 ```mermaid
 graph TD
-    A[Next.js 16 Client] -->|SSE Stream / REST| B[FastAPI Backend]
-    B -->|Offline Mode / Config| C[Local Mock Engine]
-    B -->|Online Mode| D[Google Gemini 2.0 API]
-    B -->|Save States| E[In-Memory Session Store]
-    A -->|TTS / STT| F[Browser Web Speech API]
+    A[Next.js client] -->|REST + SSE stream| B[FastAPI backend]
+    B --> C[Board orchestrator<br/>board.py]
+    C --> D[10 advisor agents<br/>agent.py + personas.py]
+    D -->|online| E[Google Gemini API]
+    D -->|offline / rate-limited| F[Mock response engine]
+    B --> G[(SQLite session store)]
+    A -->|TTS / STT| H[Browser Web Speech API]
 ```
 
-*   **Frontend**: Next.js 16 (React, TypeScript, TailwindCSS, HTML5 Canvas)
-*   **Backend**: Python 3.14 (FastAPI, Uvicorn, Pydantic v2)
-*   **AI Integration**: Google GenAI SDK (`gemini-2.0-flash-lite` and `gemini-pro-latest`)
-*   **Database**: In-Memory Repository
+| Layer | Stack |
+|---|---|
+| Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS, HTML5 Canvas |
+| Backend | Python 3.12, FastAPI, Uvicorn, Pydantic v2, pydantic-settings |
+| AI | Google GenAI SDK (default model `gemini-2.0-flash-lite`, configurable) |
+| Storage | SQLite (repository pattern; an in-memory implementation is also included) |
+| DevOps | Docker, Docker Compose, GitHub Actions (pytest + TypeScript type check) |
 
----
+## Getting started
 
-## 🚀 Quick Start Guide
+### Option 1: Docker (quickest)
 
-### 1. Backend Setup
+```bash
+git clone https://github.com/Bhanoday777/FounderOS.git
+cd FounderOS
+docker compose up --build
+```
 
-1.  Navigate to the backend directory:
-    ```bash
-    cd backend
-    ```
-2.  Activate the virtual environment:
-    ```bash
-    .\.venv\Scripts\Activate.ps1
-    ```
-3.  Install dependencies:
-    ```bash
-    pip install -r requirements.txt
-    ```
-4.  Configure your environment in `.env`:
-    ```env
-    GEMINI_API_KEY=your_key_here
-    GEMINI_MODEL=gemini-2.0-flash-lite
-    OFFLINE_DEMO=true
-    ```
-5.  Start the FastAPI server:
-    ```bash
-    uvicorn app.main:app --reload --port 8000
-    ```
+Open http://localhost:3000. Compose runs the backend in offline demo mode by default, so no API key is needed.
 
-### 2. Frontend Setup
+### Option 2: Run locally
 
-1.  Navigate to the frontend directory:
-    ```bash
-    cd frontend
-    ```
-2.  Install packages:
-    ```bash
-    npm install
-    ```
-3.  Start the Next.js development server:
-    ```bash
-    npm run dev
-    ```
-4.  Open [http://localhost:3000](http://localhost:3000) in your browser.
+**Backend**
 
----
+```bash
+cd backend
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+# macOS / Linux: source .venv/bin/activate
+pip install -r requirements.txt
+```
 
-## 📂 Project Structure
+Create `backend/.env`:
 
-*   [`backend/app/main.py`](file:///c:/Users/bhano/OneDrive/Desktop/FounderOS/backend/app/main.py): Primary REST & SSE API endpoints.
-*   [`backend/app/core/board.py`](file:///c:/Users/bhano/OneDrive/Desktop/FounderOS/backend/app/core/board.py): Orchestrates the multi-agent debate and consensus engine.
-*   [`backend/app/core/agent.py`](file:///c:/Users/bhano/OneDrive/Desktop/FounderOS/backend/app/core/agent.py): Holds individual agent personas, LLM call structures, and offline fallback mock loops.
-*   [`frontend/src/app/page.tsx`](file:///c:/Users/bhano/OneDrive/Desktop/FounderOS/frontend/src/app/page.tsx): The primary command center landing interface.
-*   [`frontend/src/lib/speech.ts`](file:///c:/Users/bhano/OneDrive/Desktop/FounderOS/frontend/src/lib/speech.ts): Helper client code managing SpeechSynthesis (TTS) and webkitSpeechRecognition (STT).
+```env
+GEMINI_API_KEY=your_key_here
+GEMINI_MODEL=gemini-2.0-flash-lite
+OFFLINE_DEMO=false   # set to true to run without an API key
+```
+
+Start the API:
+
+```bash
+uvicorn app.main:app --reload --port 8000
+```
+
+**Frontend** (in a second terminal)
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open http://localhost:3000. The frontend expects the API at `http://localhost:8000`. Set `NEXT_PUBLIC_API_URL` to point it elsewhere.
+
+### Running tests
+
+```bash
+cd backend
+pytest
+```
+
+The same suite, plus a frontend type check, runs on every push through GitHub Actions.
+
+## API overview
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/board/session` | Create a boardroom session from a pitch |
+| `GET` | `/api/board/session/{id}/stream` | Stream the debate (SSE) |
+| `GET` | `/api/board/session/{id}` | Fetch a session |
+| `GET` | `/api/board/sessions` | List past sessions |
+| `POST` | `/api/board/session/{id}/recalculate` | Re-score with custom advisor weights |
+| `POST` | `/api/board/session/{id}/chat` | Chat with an individual advisor |
+| `POST` | `/api/board/session/{id}/drill/evaluate` | Evaluate a Pitch Drill answer |
+| `GET` | `/api/board/session/{id}/export/{json,markdown,html}` | Export a session |
+
+## Project structure
+
+```text
+FounderOS/
+├── backend/
+│   ├── app/
+│   │   ├── main.py            # REST and SSE endpoints
+│   │   ├── config.py          # Settings (env vars, advisor weights)
+│   │   ├── core/
+│   │   │   ├── board.py       # Debate orchestration and consensus scoring
+│   │   │   ├── agent.py       # Advisor agent: LLM calls and offline fallback
+│   │   │   └── personas.py    # System prompts for the 10 advisors
+│   │   ├── database/          # Repository interface, SQLite and in-memory stores
+│   │   └── schemas/           # Pydantic models
+│   └── tests/                 # pytest suite
+├── frontend/
+│   └── src/
+│       ├── app/               # Pages: home, boardroom/[id], advisors, vault, docs
+│       ├── components/boardroom/  # Boardroom canvas, debate feed, votes, sandbox, drill
+│       └── lib/               # API client, speech helpers
+├── docker-compose.yml
+└── .github/workflows/ci.yml
+```
+
+Key files: [`board.py`](backend/app/core/board.py), [`agent.py`](backend/app/core/agent.py), [`personas.py`](backend/app/core/personas.py), [`main.py`](backend/app/main.py), [`speech.ts`](frontend/src/lib/speech.ts).
+
+## Author
+
+**Bhanoday Kurma**, [GitHub](https://github.com/Bhanoday777)
